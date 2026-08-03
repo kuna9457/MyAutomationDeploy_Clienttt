@@ -1,0 +1,55 @@
+@import "tailwindcss";
+
+/* ---------------------------------------------------------------------------
+   Theme switching.
+
+   Tailwind v4 compiles every colour utility to `var(--color-<name>-<shade>)`
+   (e.g. `.bg-slate-950 { background-color: var(--color-slate-950) }`). So the
+   whole UI can be flipped light/dark by redefining those variables — no
+   component needs a `dark:` prefix and nothing has to be restyled.
+
+   The app was authored dark-first: slate-950 is the page, slate-900 panels,
+   slate-100/300 text. Light mode mirrors the scale (950↔50, 900↔100, 800↔200,
+   700↔300, 600↔400, 500 stays), so each of those roles lands on its light
+   counterpart automatically.
+   --------------------------------------------------------------------------- */
+
+:root[data-theme="light"] {
+  --color-slate-950: oklch(98.4% 0.003 247.858);   /* was 50  — page background */
+  --color-slate-900: oklch(96.8% 0.007 247.896);   /* was 100 — panels */
+  --color-slate-800: oklch(92.9% 0.013 255.508);   /* was 200 — borders */
+  --color-slate-700: oklch(86.9% 0.022 252.894);   /* was 300 — input borders */
+  --color-slate-600: oklch(70.4% 0.04 256.788);    /* was 400 */
+  --color-slate-500: oklch(55.4% 0.046 257.417);   /* unchanged — muted text */
+  --color-slate-400: oklch(44.6% 0.043 257.281);   /* was 600 */
+  --color-slate-300: oklch(37.2% 0.044 257.287);   /* was 700 — body text */
+  --color-slate-200: oklch(27.9% 0.041 260.031);   /* was 800 */
+  --color-slate-100: oklch(20.8% 0.042 265.755);   /* was 900 — headings */
+  --color-slate-50:  oklch(12.9% 0.042 264.695);   /* was 950 */
+
+  /* Accent shades used as TEXT are too pale on a light background. Darken the
+     -400/-300/-200 steps only; button fills (bg-*-600/700 with white text) are
+     already correct in both themes and are left alone. */
+  --color-emerald-400: oklch(59.6% 0.145 163.225); /* emerald-600 */
+  --color-red-400:     oklch(57.7% 0.245 27.325);  /* red-600 */
+  --color-red-300:     oklch(50.5% 0.213 27.518);  /* red-700 */
+  --color-red-200:     oklch(44.4% 0.177 26.899);  /* red-800 */
+  --color-amber-400:   oklch(55.5% 0.163 48.998);  /* amber-700 */
+  --color-indigo-400:  oklch(51.1% 0.262 276.966); /* indigo-600 */
+  --color-indigo-300:  oklch(45.7% 0.24 277.023);  /* indigo-700 */
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background-color: var(--color-slate-950);
+  color: var(--color-slate-300);
+  transition: background-color 150ms ease, color 150ms ease;
+}
+
+/* Native controls (checkboxes, radios, scrollbars) follow the theme too. */
+:root[data-theme="dark"] { color-scheme: dark; }
+:root[data-theme="light"] { color-scheme: light; }
