@@ -1,11 +1,14 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { api, ApiError } from "../lib/api"
 import { CLIENT_SELECTABLE_MODES, MODE_LABELS as CLIENT_MODE_LABELS } from "../lib/modes"
 import BrokerLoginPanel from "./BrokerLoginPanel"
+import SymbolSettingsModal from "./SymbolSettingsModal"
+import { EMPTY_SYMBOL_CONFIG, type SymbolConfig } from "../lib/types"
 import type {
   AdminBotConfig,
   BotStatus,
   BrokerStatusEntry,
+  ControlPreset,
   Instrument,
   RiskLimits,
   StrategyInfo,
@@ -39,6 +42,22 @@ export default function Sidebar({ status, onChanged }: Props) {
   const [brokerStatus, setBrokerStatus] = useState<Record<string, BrokerStatusEntry>>({})
   const [riskLimits, setRiskLimits] = useState<RiskLimits | null>(null)
   const [botConfig, setBotConfig] = useState<AdminBotConfig | null>(null)
+  // Per-stock settings for the CURRENT mode: symbol -> its overrides. Only
+  // symbols that actually deviate appear here (the backend deletes no-op
+  // entries), so `symbolConfigs[sym]` being undefined is the normal case and
+  // means "trades the way the strategy says".
+  const [symbolConfigs, setSymbolConfigs] = useState<Record<string, SymbolConfig>>({})
+  const [rrChoices, setRrChoices] = useState<{ value: number; label: string }[]>([])
+  const [settingsFor, setSettingsFor] = useState<string | null>(null)
+  // Saved Controls presets: the whole panel under a name.
+  const [presets, setPresets] = useState<Record<string, ControlPreset>>({})
+  const [presetName, setPresetName] = useState("")
+  const [presetMsg, setPresetMsg] = useState<string | null>(null)
+  // Loading a preset sets `mode`, which fires the strategy effect below and
+  // would otherwise immediately reset strategyKey to that mode's DEFAULT,
+  // discarding the strategy the preset saved. Parking it here lets that effect
+  // honour the preset's choice once the new mode's list has actually arrived.
+  const pendingStrategyKey = useRef<string | null>(null)
 
   useEffect(() => {
     api.get<Instrument[]>("/config/instruments").then(setInstruments).catch(() => {})
@@ -48,15 +67,40 @@ export default function Sidebar({ status, onChanged }: Props) {
       .catch(() => {})
     api.get<RiskLimits>("/risk/limits").then(setRiskLimits).catch(() => {})
     api.get<AdminBotConfig>("/admin/config").then(setBotConfig).catch(() => {})
+    api
+      .get<{ choices: { value: number; label: string }[] }>("/config/rr-choices")
+      .then((r) => setRrChoices(r.choices))
+      .catch(() => {})
+    api.get<Record<string, ControlPreset>>("/admin/presets").then(setPresets).catch(() => {})
   }, [])
+
+  // Per-stock settings are stored per mode (a 1-minute Scalper and a 15-minute
+  // Intraday want different windows on the same ticker), so switching mode
+  // reloads them. A failure reads as "none configured" rather than blocking
+  // the sidebar — worst case the gear opens an empty form.
+  useEffect(() => {
+    setSettingsFor(null)
+    api
+      .get<Record<string, SymbolConfig>>(`/admin/symbol-config?mode=${mode}`)
+      .then(setSymbolConfigs)
+      .catch(() => setSymbolConfigs({}))
+  }, [mode])
 
   useEffect(() => {
     api
       .get<StrategyInfo[]>(`/config/strategies?mode=${mode}`)
       .then((list) => {
         setStrategies(list)
-        const def = list.find((s) => s.is_default) ?? list[0]
-        setStrategyKey(def ? def.key : "")
+        // A preset's strategy wins when it's still valid for this mode;
+        // otherwise fall back to the mode's default, as before. Cleared either
+        // way so a later plain mode switch behaves normally.
+        const wanted = pendingStrategyKey.current
+        pendingStrategyKey.current = null
+        const chosen =
+          (wanted ? list.find((s) => s.key === wanted) : undefined) ??
+          list.find((s) => s.is_default) ??
+          list[0]
+        setStrategyKey(chosen ? chosen.key : "")
       })
       .catch(() => {})
   }, [mode])
@@ -162,6 +206,90 @@ export default function Sidebar({ status, onChanged }: Props) {
     }
   }
 
+  // -- saved Controls presets --------------------------------------------- //
+  const savePreset = async () => {
+    const name = presetName.trim()
+    if (!name) {
+      setPresetMsg("Give the preset a name first.")
+      return
+    }
+    setBusy(true)
+    setPresetMsg(null)
+    try {
+      // The full panel, including every per-stock setting saved under this
+      // mode — not just the selected stocks — so loading restores the setup
+      // byte for byte rather than a subset of it.
+      const all = await api.put<Record<string, ControlPreset>>("/admin/presets", {
+        name,
+        environment,
+        mode,
+        broker,
+        strategy_key: strategyKey,
+        segments,
+        symbols,
+        capital,
+        mcx_lots: {},
+        symbol_configs: symbolConfigs,
+      })
+      setPresets(all)
+      setPresetMsg(`Saved “${name}”.`)
+    } catch (err) {
+      setPresetMsg(err instanceof ApiError ? err.message : "Failed to save preset.")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const loadPreset = async (name: string) => {
+    if (!name) return
+    setBusy(true)
+    setPresetMsg(null)
+    try {
+      // The server restores this mode's per-stock settings as part of the
+      // load; everything else comes back in the response for the panel to
+      // repopulate itself with. Nothing is started — Start Bot stays yours.
+      const p = await api.post<ControlPreset>(
+        `/admin/presets/${encodeURIComponent(name)}/load`,
+      )
+      setEnvironment(p.environment)
+      setBroker(p.broker || BROKERS[0])
+      setCapital(p.capital)
+      setSegments(p.segments)
+      setSymbols(p.symbols)
+      setSymbolConfigs(p.symbol_configs)
+      setPresetName(name)
+      if (p.mode !== mode && (MODES as readonly string[]).includes(p.mode)) {
+        // Changing mode re-fetches the strategy list; park the preset's
+        // strategy so that effect restores it instead of the mode default.
+        pendingStrategyKey.current = p.strategy_key
+        setMode(p.mode as (typeof MODES)[number])
+      } else {
+        setStrategyKey(p.strategy_key)
+      }
+      setPresetMsg(`Loaded “${name}”. Press Start Bot when you're ready.`)
+    } catch (err) {
+      setPresetMsg(err instanceof ApiError ? err.message : "Failed to load preset.")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const deletePreset = async (name: string) => {
+    setBusy(true)
+    setPresetMsg(null)
+    try {
+      const all = await api.del<Record<string, ControlPreset>>(
+        `/admin/presets/${encodeURIComponent(name)}`,
+      )
+      setPresets(all)
+      setPresetMsg(`Deleted “${name}”.`)
+    } catch (err) {
+      setPresetMsg(err instanceof ApiError ? err.message : "Failed to delete preset.")
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const [configMsg, setConfigMsg] = useState<string | null>(null)
   const modeIsClientSelectable = (CLIENT_SELECTABLE_MODES as readonly string[]).includes(mode)
 
@@ -220,6 +348,81 @@ export default function Sidebar({ status, onChanged }: Props) {
   return (
     <aside className="flex h-full w-[85vw] max-w-80 shrink-0 flex-col gap-4 overflow-y-auto border-r border-slate-800 bg-slate-900 p-4 text-sm lg:w-80 lg:bg-slate-900/60">
       <h2 className="text-lg font-semibold text-slate-100">⚙️ Controls</h2>
+
+      <section className="rounded-lg border border-slate-800 p-3">
+        <div className="mb-2 font-medium text-slate-300">📁 Saved Setups</div>
+
+        {Object.keys(presets).length > 0 ? (
+          <div className="mb-2 flex gap-1">
+            <select
+              aria-label="Load a saved setup"
+              defaultValue=""
+              disabled={busy}
+              onChange={(e) => {
+                const name = e.target.value
+                e.currentTarget.value = ""
+                loadPreset(name)
+              }}
+              className="min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-slate-100"
+            >
+              <option value="">Load a setup…</option>
+              {Object.entries(presets).map(([name, p]) => (
+                <option key={name} value={name}>
+                  {name} — {p.mode}, {p.symbols.length} stock
+                  {p.symbols.length === 1 ? "" : "s"}
+                </option>
+              ))}
+            </select>
+            {presets[presetName.trim()] && (
+              <button
+                type="button"
+                onClick={() => deletePreset(presetName.trim())}
+                disabled={busy}
+                title={`Delete “${presetName.trim()}”`}
+                aria-label={`Delete preset ${presetName.trim()}`}
+                className="rounded-lg bg-slate-800 px-2 text-slate-400 hover:bg-red-900 hover:text-red-200 disabled:opacity-50"
+              >
+                🗑️
+              </button>
+            )}
+          </div>
+        ) : (
+          <p className="mb-2 text-[11px] text-slate-500">
+            No setups saved yet.
+          </p>
+        )}
+
+        <div className="flex gap-1">
+          <input
+            type="text"
+            value={presetName}
+            maxLength={60}
+            onChange={(e) => setPresetName(e.target.value)}
+            placeholder="Name this setup…"
+            aria-label="Preset name"
+            className="min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-slate-100 placeholder:text-slate-600"
+          />
+          <button
+            type="button"
+            onClick={savePreset}
+            disabled={busy}
+            className="rounded-lg bg-slate-700 px-3 py-1.5 font-medium text-slate-100 hover:bg-slate-600 disabled:opacity-50"
+          >
+            💾 Save
+          </button>
+        </div>
+        <p className="mt-1 text-[11px] text-slate-500">
+          Saves everything below — environment, mode, strategy, segments,
+          instruments, capital and every ⚙️ per-stock setting. Loading restores
+          the lot; it never starts or stops the bot.
+          {presets[presetName.trim()] && (
+            <span className="block text-amber-400">
+              “{presetName.trim()}” already exists — saving overwrites it.
+            </span>
+          )}
+        </p>
+        {presetMsg && <p className="mt-1 text-xs text-emerald-400">{presetMsg}</p>}
+      </section>
 
       <section>
         <div className="mb-1 font-medium text-slate-300">Environment</div>
@@ -353,18 +556,45 @@ export default function Sidebar({ status, onChanged }: Props) {
                 : `No instrument matches “${symbolQuery.trim()}”.`}
             </p>
           ) : (
-            visibleUniverse.map((i) => (
-              <label key={i.symbol} className="flex items-center gap-2 py-0.5 text-slate-300">
-                <input
-                  type="checkbox"
-                  checked={symbols.includes(i.symbol)}
-                  onChange={() => toggleSymbol(i.symbol)}
-                />
-                {i.symbol}
-              </label>
-            ))
+            visibleUniverse.map((i) => {
+              const custom = symbolConfigs[i.symbol]
+              return (
+                <div key={i.symbol} className="flex items-center gap-2 py-0.5">
+                  <label className="flex flex-1 items-center gap-2 text-slate-300">
+                    <input
+                      type="checkbox"
+                      checked={symbols.includes(i.symbol)}
+                      onChange={() => toggleSymbol(i.symbol)}
+                    />
+                    {i.symbol}
+                    {custom && (
+                      <span
+                        title={describeSymbolConfig(custom)}
+                        className="rounded bg-indigo-950 px-1 text-[10px] text-indigo-300"
+                      >
+                        custom
+                      </span>
+                    )}
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setSettingsFor(i.symbol)}
+                    title={`Settings for ${i.symbol} (${mode})`}
+                    aria-label={`Settings for ${i.symbol}`}
+                    className="rounded px-1 text-slate-500 hover:bg-slate-800 hover:text-slate-200"
+                  >
+                    ⚙️
+                  </button>
+                </div>
+              )
+            })
           )}
         </div>
+
+        <p className="mt-1 text-[11px] text-slate-500">
+          ⚙️ sets a stock's own trading days, time window and risk:reward for{" "}
+          {mode}. Stocks without it trade exactly as the strategy says.
+        </p>
 
         {hiddenSelectedCount > 0 && (
           <p className="mt-1 text-[11px] text-slate-500">
@@ -522,8 +752,36 @@ export default function Sidebar({ status, onChanged }: Props) {
       </section>
 
       <BrokerLoginPanel />
+
+      {settingsFor && (
+        <SymbolSettingsModal
+          mode={mode}
+          symbol={settingsFor}
+          initial={symbolConfigs[settingsFor] ?? EMPTY_SYMBOL_CONFIG}
+          rrChoices={rrChoices}
+          onSaved={setSymbolConfigs}
+          onClose={() => setSettingsFor(null)}
+        />
+      )}
     </aside>
   )
+}
+
+const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
+/** Tooltip summary of a stock's overrides — the same facts the engine logs at
+ *  start-up, so what the sidebar shows and what the bot runs read alike. */
+function describeSymbolConfig(c: SymbolConfig): string {
+  const bits: string[] = []
+  if (c.trade_days.length > 0)
+    bits.push(c.trade_days.map((d) => DAY_LABELS[d]).join("/"))
+  if (c.start_time || c.end_time)
+    bits.push(
+      `${c.start_time || "open"}–${c.end_time || "close"}` +
+        (c.square_off_at_end ? " (square off at end)" : ""),
+    )
+  if (c.risk_reward > 0) bits.push(`RR 1:${c.risk_reward}`)
+  return bits.join(" · ")
 }
 
 function RiskField({
