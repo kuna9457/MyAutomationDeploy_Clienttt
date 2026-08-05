@@ -1,8 +1,9 @@
-import { useState, type FormEvent } from "react"
+import { useEffect, useState, type FormEvent } from "react"
 import { useNavigate } from "react-router-dom"
 import Brand from "../components/Brand"
+import ForgotPassword from "../components/ForgotPassword"
 import { useAuth } from "../lib/auth"
-import { ApiError } from "../lib/api"
+import { api, ApiError } from "../lib/api"
 import { ThemeToggle } from "../lib/theme"
 
 export default function LoginPage() {
@@ -12,6 +13,17 @@ export default function LoginPage() {
   const [password, setPassword] = useState("")
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [forgot, setForgot] = useState(false)
+  // Only offer the link when this server can actually send mail — otherwise
+  // it leads to a dead end. The check says nothing about any account.
+  const [resetAvailable, setResetAvailable] = useState(false)
+
+  useEffect(() => {
+    api
+      .get<{ available: boolean }>("/account/password-reset/available")
+      .then((r) => setResetAvailable(r.available))
+      .catch(() => setResetAvailable(false))
+  }, [])
 
   if (isAuthenticated) {
     navigate("/", { replace: true })
@@ -30,6 +42,21 @@ export default function LoginPage() {
     } finally {
       setBusy(false)
     }
+  }
+
+  if (forgot) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-950 px-4">
+        <div className="w-full max-w-sm rounded-xl border border-slate-800 bg-slate-900 p-6 shadow-xl sm:p-8">
+          <div className="mb-1 flex items-start justify-between gap-2">
+            <Brand size="lg" />
+            <ThemeToggle />
+          </div>
+          <p className="mb-6 text-sm text-slate-400">Reset your password</p>
+          <ForgotPassword onDone={() => setForgot(false)} />
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -75,6 +102,19 @@ export default function LoginPage() {
         >
           {busy ? "Signing in…" : "Sign in"}
         </button>
+
+        {resetAvailable && (
+          <button
+            type="button"
+            onClick={() => {
+              setForgot(true)
+              setError(null)
+            }}
+            className="mt-3 w-full text-center text-sm text-slate-400 hover:text-indigo-400"
+          >
+            Forgot password?
+          </button>
+        )}
       </form>
     </div>
   )

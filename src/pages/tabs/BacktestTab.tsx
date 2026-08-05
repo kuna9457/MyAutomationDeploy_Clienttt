@@ -23,6 +23,10 @@ export default function BacktestTab() {
   const [start, setStart] = useState(isoDaysAgo(DEFAULT_SPAN.Swing))
   const [end, setEnd] = useState(isoDaysAgo(0))
   const [capital, setCapital] = useState(100000)
+  // Signal-score threshold to test. 0 = the strategy's own. This is the
+  // point of the control: measure a threshold on real history before putting
+  // it in front of the market.
+  const [minScore, setMinScore] = useState(0)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<BacktestResult | null>(null)
@@ -57,6 +61,7 @@ export default function BacktestTab() {
         start,
         end,
         initial_capital: capital,
+        min_score: minScore,
       })
       setResult(res)
     } catch (err) {
@@ -104,6 +109,21 @@ export default function BacktestTab() {
             value={capital}
             onChange={(e) => setCapital(Number(e.target.value))}
           />
+        </Field>
+        <Field label="Signal Score (0 = strategy default)">
+          <input
+            type="number"
+            min={0}
+            max={20}
+            step={0.5}
+            className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-slate-100"
+            value={minScore}
+            onChange={(e) => setMinScore(Number(e.target.value))}
+          />
+          <p className="mt-1 text-[11px] text-slate-500">
+            Run the same symbol and window twice at different scores to see
+            what the change actually costs or earns.
+          </p>
         </Field>
         <Field label="Strategy">
           <select

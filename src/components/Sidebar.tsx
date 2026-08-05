@@ -37,6 +37,10 @@ export default function Sidebar({ status, onChanged }: Props) {
   const [symbols, setSymbols] = useState<string[]>([])
   const [symbolQuery, setSymbolQuery] = useState("")
   const [capital, setCapital] = useState(100000)
+  // Signal-score threshold for the selected mode. 0 = inherit the strategy's
+  // own. Raising it takes fewer, higher-agreement setups; lowering it takes
+  // more, weaker ones. Never affects position size or the risk cap.
+  const [minScore, setMinScore] = useState(0)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [brokerStatus, setBrokerStatus] = useState<Record<string, BrokerStatusEntry>>({})
@@ -104,6 +108,12 @@ export default function Sidebar({ status, onChanged }: Props) {
       })
       .catch(() => {})
   }, [mode])
+
+  // Seed from what's saved for this mode, so the field shows what is actually
+  // in force rather than resetting to "inherit" on every mode switch.
+  useEffect(() => {
+    setMinScore(botConfig?.by_mode?.[mode]?.min_score ?? 0)
+  }, [mode, botConfig])
 
   const universe = useMemo(
     () => instruments.filter((i) => segments.includes(i.segment)),
@@ -187,6 +197,7 @@ export default function Sidebar({ status, onChanged }: Props) {
         capital,
         broker: environment === "Live" ? broker : undefined,
         mcx_lots: {},
+        min_score: minScore,
       })
       onChanged()
     } catch (err) {
@@ -228,6 +239,7 @@ export default function Sidebar({ status, onChanged }: Props) {
         segments,
         symbols,
         capital,
+        min_score: minScore,
         mcx_lots: {},
         symbol_configs: symbolConfigs,
       })
@@ -254,6 +266,7 @@ export default function Sidebar({ status, onChanged }: Props) {
       setEnvironment(p.environment)
       setBroker(p.broker || BROKERS[0])
       setCapital(p.capital)
+      setMinScore(p.min_score ?? 0)
       setSegments(p.segments)
       setSymbols(p.symbols)
       setSymbolConfigs(p.symbol_configs)
@@ -307,6 +320,7 @@ export default function Sidebar({ status, onChanged }: Props) {
     try {
       const updated = await api.put<AdminBotConfig>("/admin/config", {
         mode, strategy_key: strategyKey, segments, symbols, mcx_lots: {},
+        min_score: minScore,
       })
       setBotConfig(updated)
       setConfigMsg(`Saved — clients who pick ${mode} now trade this.`)
@@ -466,6 +480,66 @@ export default function Sidebar({ status, onChanged }: Props) {
             {strategies.find((s) => s.key === strategyKey)!.summary}
           </p>
         )}
+      </section>
+
+      <section>
+        <div className="mb-1 font-medium text-slate-300">
+          🎯 Signal Score ({mode})
+        </div>
+        {(() => {
+          const sel = strategies.find((s) => s.key === strategyKey)
+          const own = sel?.params.cs_min_score ?? 0
+          const inert = sel !== undefined && !sel.uses_min_score
+          const effective = minScore > 0 ? minScore : own
+          return (
+            <>
+              <div className="flex items-center gap-2">
+                <input
+                  type="range"
+                  min={0}
+                  max={12}
+                  step={0.5}
+                  value={minScore}
+                  disabled={running}
+                  onChange={(e) => setMinScore(Number(e.target.value))}
+                  className="flex-1"
+                />
+                <input
+                  type="number"
+                  min={0}
+                  max={20}
+                  step={0.5}
+                  value={minScore}
+                  disabled={running}
+                  onChange={(e) => setMinScore(Number(e.target.value))}
+                  className="w-16 rounded-lg border border-slate-700 bg-slate-950 px-2 py-1 text-sm text-slate-100"
+                />
+              </div>
+              <p className="mt-1 text-[11px] text-slate-500">
+                {minScore === 0
+                  ? `0 = use the strategy's own (${own}). `
+                  : `Overriding ${own} → ${effective}. `}
+                Higher = fewer, higher-agreement entries. Lower = more entries
+                on weaker evidence.
+              </p>
+              <p className="mt-1 text-[11px] text-slate-600">
+                1.0 any weak pattern · 3.0 one strong candle · 6.0 ≈ two
+                agreeing patterns
+              </p>
+              {inert && (
+                <p className="mt-1 text-[11px] text-amber-400">
+                  ⚠️ {sel?.name} doesn't use scoring — this setting will have no
+                  effect on it.
+                </p>
+              )}
+              {running && (
+                <p className="mt-1 text-[11px] text-slate-500">
+                  Stop the bot to change it.
+                </p>
+              )}
+            </>
+          )
+        })()}
       </section>
 
       {environment === "Live" && (

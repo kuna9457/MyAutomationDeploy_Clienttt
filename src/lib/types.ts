@@ -17,6 +17,10 @@ export interface StrategyInfo {
   name: string
   summary: string
   is_default: boolean
+  /** Whether this strategy actually gates on the signal score. False means
+   *  the score control is inert for it — the UI says so rather than letting
+   *  a setting be silently ignored. */
+  uses_min_score: boolean
   params: {
     timeframe: string
     risk_per_trade: number
@@ -25,6 +29,8 @@ export interface StrategyInfo {
     atr_period: number
     allow_short: boolean
     max_hold_minutes: number
+    /** The strategy's OWN threshold — what "inherit" resolves to. */
+    cs_min_score: number
   }
 }
 
@@ -223,6 +229,9 @@ export interface ClientOverviewRow {
   display_name: string
   status: "active" | "disabled"
   created_at: string
+  /** Where this client's forgot-password code is sent. Empty = they cannot
+   *  self-serve a reset; only admin can change their password. */
+  email?: string
   running: boolean
   environment: string | null
   broker: string | null
@@ -253,6 +262,8 @@ export interface AdminModeConfig {
    * GET /config/rr-choices; the backend rejects anything else.
    */
   risk_reward: number
+  /** Signal-score threshold for this mode. 0 = inherit the strategy's own. */
+  min_score: number
 }
 
 export interface AdminBotConfig {
@@ -316,6 +327,7 @@ export interface ControlPreset {
   segments: string[]
   symbols: string[]
   capital: number
+  min_score: number
   mcx_lots: Record<string, number>
   /** symbol -> its settings for `mode`, as they were when saved. */
   symbol_configs: Record<string, SymbolConfig>
