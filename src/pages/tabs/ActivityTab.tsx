@@ -1,17 +1,32 @@
 import { useState } from "react"
+import PlatformSignals from "../../components/PlatformSignals"
 import type { BotStatus } from "../../lib/types"
 
 export default function ActivityTab({ status }: { status: BotStatus | null }) {
   const [lines, setLines] = useState(60)
 
+  // The platform's signals show even with this account's bot stopped — a
+  // client who logs in mid-session can see what is being traded around them
+  // rather than a bare "Bot not started". Their OWN log below still only
+  // exists once they have started.
   if (!status || !status.started) {
-    return <p className="text-sm text-slate-400">Bot not started.</p>
+    return (
+      <div>
+        <PlatformSignals />
+        <p className="text-sm text-slate-400">
+          Your bot isn't started, so nothing has been placed in your account
+          yet. Press <strong className="text-slate-300">Start Bot</strong> to
+          begin trading these signals with your own capital.
+        </p>
+      </div>
+    )
   }
 
   const log = status.log ?? []
 
   return (
     <div>
+      <PlatformSignals />
       <h3 className="mb-1 text-sm font-semibold text-slate-200">📝 Activity Log</h3>
       <p className="mb-3 text-xs text-slate-500">
         Newest first. Entries, exits, rejections and feed problems.

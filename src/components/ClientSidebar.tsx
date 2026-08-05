@@ -18,8 +18,10 @@ export default function ClientSidebar({ status, onChanged }: Props) {
   const [fetchedFunds, setFetchedFunds] = useState<number | null>(null)
   const [fundsError, setFundsError] = useState<string | null>(null)
   const [riskLimits, setRiskLimits] = useState<RiskLimits | null>(null)
+  // What admin has set this account to trade. Read-only: a client does not
+  // choose the mode, strategy or instruments — only how much of their own
+  // money is at risk. The server ignores any mode sent from here anyway.
   const [modes, setModes] = useState<ClientModeInfo[]>([])
-  const [mode, setMode] = useState("")
   // Bumped when credentials are saved/removed, to re-mount the connect panel
   // so its login-url call is retried with the new key.
   const [credentialsVersion, setCredentialsVersion] = useState(0)
@@ -28,23 +30,12 @@ export default function ClientSidebar({ status, onChanged }: Props) {
 
   useEffect(() => {
     api.get<RiskLimits>("/risk/limits").then(setRiskLimits).catch(() => {})
-    api
-      .get<ClientModeInfo[]>("/config/client-modes")
-      .then((list) => {
-        setModes(list)
-        setMode((prev) => (list.some((m) => m.key === prev) ? prev : list[0]?.key ?? ""))
-      })
-      .catch(() => {})
+    api.get<ClientModeInfo[]>("/config/client-modes").then(setModes).catch(() => {})
   }, [])
 
   const running = !!status?.running
-  const selectedMode = modes.find((m) => m.key === mode)
-
-  // After a page reload mid-session, show the mode the bot is actually
-  // running rather than whatever happens to be first in the list.
-  useEffect(() => {
-    if (status?.running && status.mode) setMode(status.mode)
-  }, [status?.running, status?.mode])
+  // Admin configures exactly one; the server resolves it either way.
+  const activeMode = modes[0] ?? null
 
   const fetchFunds = async () => {
     setFundsError(null)
@@ -60,16 +51,13 @@ export default function ClientSidebar({ status, onChanged }: Props) {
   }
 
   const start = async () => {
-    if (!mode) {
-      setError("Pick a trading mode first.")
-      return
-    }
     setBusy(true)
     setError(null)
     try {
+      // No `mode`: what to trade is admin's decision and is resolved
+      // server-side. This request only says how much of MY money to use.
       await api.post("/bot/start", {
         environment,
-        mode,
         capital,
         broker: environment === "Live" ? broker : undefined,
       })
@@ -114,41 +102,25 @@ export default function ClientSidebar({ status, onChanged }: Props) {
       </p>
 
       <section>
-        <div className="mb-1 font-medium text-slate-300">Trading Mode</div>
-        {modes.length === 0 ? (
+        <div className="mb-1 font-medium text-slate-300">What you trade</div>
+        {activeMode === null ? (
           <p className="rounded-lg border border-amber-900/60 bg-amber-950/30 p-2 text-xs text-amber-400">
-            No trading modes have been set up for you yet — ask your admin to
-            configure one before you start.
+            Your admin hasn't set up trading yet — ask them to configure it
+            before you start.
           </p>
         ) : (
-          <>
-            {modes.map((m) => (
-              <label
-                key={m.key}
-                className="mb-1 flex items-start gap-2 text-slate-300"
-              >
-                <input
-                  type="radio"
-                  className="mt-1"
-                  checked={mode === m.key}
-                  disabled={running}
-                  onChange={() => setMode(m.key)}
-                />
-                <span>
-                  {m.label}
-                  <span className="block text-[11px] text-slate-500">
-                    {m.instrument_count} instrument
-                    {m.instrument_count === 1 ? "" : "s"} · RR 1:{m.risk_reward}
-                  </span>
-                </span>
-              </label>
-            ))}
-            {running && selectedMode && (
-              <p className="mt-1 text-[11px] text-slate-500">
-                Stop the bot to switch mode.
-              </p>
-            )}
-          </>
+          <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-2">
+            <div className="text-slate-200">{activeMode.label}</div>
+            <div className="text-[11px] text-slate-500">
+              {activeMode.instrument_count} instrument
+              {activeMode.instrument_count === 1 ? "" : "s"} · RR 1:
+              {activeMode.risk_reward}
+            </div>
+            <p className="mt-1 text-[11px] text-slate-500">
+              Set by your admin. Your bot sizes each signal to your own capital
+              and risk limits, then places it in your broker account.
+            </p>
+          </div>
         )}
       </section>
 
@@ -265,7 +237,7 @@ export default function ClientSidebar({ status, onChanged }: Props) {
       <div className="flex gap-2">
         <button
           onClick={start}
-          disabled={busy || running || modes.length === 0}
+          disabled={busy || running || activeMode === null}
           className="flex-1 rounded-lg bg-indigo-600 px-3 py-2 font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
         >
           ▶️ Start Bot

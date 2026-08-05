@@ -109,6 +109,30 @@ export interface BotStatus {
   risk_status?: RiskStatus
 }
 
+/** One decision the platform's shared strategy made (GET /bot/platform-signals).
+ *  Carries NO quantity: size is per-account and only exists once an account
+ *  actually takes the trade. */
+export interface PlatformSignal {
+  time: string
+  symbol: string
+  segment: string
+  side: string
+  entry: number
+  stop: number
+  target: number
+  rr: number
+  reason: string
+}
+
+export interface PlatformSignalsResponse {
+  /** Whether YOUR OWN bot is running — watching is not trading. */
+  running: boolean
+  /** Whether the shared strategy is live right now. */
+  live: boolean
+  mode: string
+  signals: PlatformSignal[]
+}
+
 export interface BrokerPosition {
   symbol: string
   side: string
