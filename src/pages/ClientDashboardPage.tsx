@@ -84,8 +84,8 @@ export default function ClientDashboardPage() {
 
           {tab === "dashboard" && <LiveDashboardTab status={status} showStrategy={false} />}
           {tab === "holdings" && <HoldingsTab status={status} onChanged={refresh} />}
-          {tab === "activity" && <ActivityTab status={status} />}
-          {tab === "trades" && <TradeLogTab />}
+          {tab === "activity" && <ActivityTab status={status} showStrategy={false} />}
+          {tab === "trades" && <TradeLogTab showStrategy={false} />}
         </main>
       </div>
     </div>

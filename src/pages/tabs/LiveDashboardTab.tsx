@@ -108,7 +108,12 @@ export default function LiveDashboardTab({
             { key: "rr", header: "RR", render: (r) => r.rr },
             { key: "qty", header: "Qty", render: (r) => r.qty },
             { key: "deployed", header: "Deployed (₹)", render: (r) => r.deployed.toLocaleString("en-IN") },
-            { key: "reason", header: "Reason", render: (r) => r.reason },
+            // Reason names the SETUP that fired ("Price>VWAP + MACD bullish
+            // cross"), which is the edge itself — admin only. A client sees
+            // what was executed, never why.
+            ...(showStrategy
+              ? [{ key: "reason", header: "Reason", render: (r: (typeof signals)[number]) => r.reason }]
+              : []),
           ]}
         />
       </div>

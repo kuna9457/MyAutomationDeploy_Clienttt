@@ -2,7 +2,14 @@ import { useState } from "react"
 import PlatformSignals from "../../components/PlatformSignals"
 import type { BotStatus } from "../../lib/types"
 
-export default function ActivityTab({ status }: { status: BotStatus | null }) {
+export default function ActivityTab({
+  status,
+  showStrategy = true,
+}: {
+  status: BotStatus | null
+  /** Admin sees why each signal fired; a client sees execution only. */
+  showStrategy?: boolean
+}) {
   const [lines, setLines] = useState(60)
 
   // The platform's signals show even with this account's bot stopped — a
@@ -12,7 +19,7 @@ export default function ActivityTab({ status }: { status: BotStatus | null }) {
   if (!status || !status.started) {
     return (
       <div>
-        <PlatformSignals />
+        <PlatformSignals showReason={showStrategy} />
         <p className="text-sm text-slate-400">
           Your bot isn't started, so nothing has been placed in your account
           yet. Press <strong className="text-slate-300">Start Bot</strong> to
@@ -26,7 +33,7 @@ export default function ActivityTab({ status }: { status: BotStatus | null }) {
 
   return (
     <div>
-      <PlatformSignals />
+      <PlatformSignals showReason={showStrategy} />
       <h3 className="mb-1 text-sm font-semibold text-slate-200">📝 Activity Log</h3>
       <p className="mb-3 text-xs text-slate-500">
         Newest first. Entries, exits, rejections and feed problems.

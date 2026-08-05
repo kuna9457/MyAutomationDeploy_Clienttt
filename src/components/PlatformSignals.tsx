@@ -13,7 +13,13 @@ import type { PlatformSignalsResponse } from "../lib/types"
  * quantity is shown: size is decided per account from that account's own
  * capital, so it does not exist until the account actually takes the trade.
  */
-export default function PlatformSignals() {
+export default function PlatformSignals({
+  showReason = true,
+}: {
+  /** Admin sees WHY each signal fired; a client sees only what executed —
+   *  the reason text names the setup, which is the edge itself. */
+  showReason?: boolean
+}) {
   const { data } = usePolling<PlatformSignalsResponse>(
     () => api.get<PlatformSignalsResponse>("/bot/platform-signals"),
     3000,
@@ -75,7 +81,7 @@ export default function PlatformSignals() {
                 <th className="py-1 pr-3 font-medium">Stop</th>
                 <th className="py-1 pr-3 font-medium">Target</th>
                 <th className="py-1 pr-3 font-medium">RR</th>
-                <th className="py-1 font-medium">Reason</th>
+                {showReason && <th className="py-1 font-medium">Reason</th>}
               </tr>
             </thead>
             <tbody className="text-slate-300">
@@ -94,7 +100,7 @@ export default function PlatformSignals() {
                   <td className="py-1 pr-3 whitespace-nowrap">{s.stop}</td>
                   <td className="py-1 pr-3 whitespace-nowrap">{s.target}</td>
                   <td className="py-1 pr-3 whitespace-nowrap">1:{s.rr}</td>
-                  <td className="py-1 text-slate-500">{s.reason}</td>
+                  {showReason && <td className="py-1 text-slate-500">{s.reason}</td>}
                 </tr>
               ))}
             </tbody>

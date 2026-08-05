@@ -4,7 +4,17 @@ import { api, downloadFile } from "../../lib/api"
 import { usePolling } from "../../lib/usePolling"
 import type { AnalyticsSummary, DailyPnlRow, TradeRow } from "../../lib/types"
 
-export default function TradeLogTab() {
+/** Trade fields that name the EDGE rather than the execution. Hidden from
+ *  client accounts: `strategy` is the strategy key, `entry_reason` is the
+ *  setup that fired ("Price>VWAP + MACD bullish cross"). A client sees what
+ *  was executed in their account, never why it was chosen. */
+const STRATEGY_FIELDS = ["strategy", "entry_reason"]
+
+export default function TradeLogTab({
+  showStrategy = true,
+}: {
+  showStrategy?: boolean
+}) {
   const [env, setEnv] = useState<"Paper" | "Live">("Paper")
   const [confirmReset, setConfirmReset] = useState(false)
   const [resetMsg, setResetMsg] = useState<string | null>(null)
@@ -25,7 +35,13 @@ export default function TradeLogTab() {
     [env],
   )
 
-  const columns = trades && trades.length > 0 ? Object.keys(trades[0]) : []
+  // Columns are derived from whatever the row carries, so a new field added
+  // server-side shows up automatically — which is why the strategy fields
+  // have to be filtered out explicitly here rather than just not asked for.
+  const allColumns = trades && trades.length > 0 ? Object.keys(trades[0]) : []
+  const columns = showStrategy
+    ? allColumns
+    : allColumns.filter((c) => !STRATEGY_FIELDS.includes(c))
 
   const doExport = () => downloadFile(`/trades/export?environment=${env}`, `${env}_trades.xlsx`)
 
