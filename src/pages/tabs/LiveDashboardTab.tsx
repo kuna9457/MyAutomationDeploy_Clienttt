@@ -98,8 +98,27 @@ export default function LiveDashboardTab({
           rows={signals}
           rowKey={(r, i) => `${r.symbol}-${r.time}-${i}`}
           empty="No signals yet — waiting for strategy conditions to align."
+          rowClassName={(r) => (r.status === "SKIPPED" ? "opacity-60" : "")}
           columns={[
             { key: "time", header: "Time", render: (r) => r.time },
+            {
+              key: "status",
+              header: "",
+              // A signal that fired but couldn't be funded is not a trade.
+              // Marking it stops a symbol nobody can afford from reading as
+              // a burst of activity.
+              render: (r) =>
+                r.status === "SKIPPED" ? (
+                  <span
+                    title={r.skip_reason || "Signal skipped"}
+                    className="rounded bg-amber-950 px-1.5 py-0.5 text-[10px] whitespace-nowrap text-amber-300"
+                  >
+                    skipped
+                  </span>
+                ) : (
+                  <span className="text-[10px] text-emerald-400">taken</span>
+                ),
+            },
             { key: "sym", header: "Symbol", render: (r) => r.symbol },
             { key: "side", header: "Side", render: (r) => r.side },
             { key: "entry", header: "Entry", render: (r) => r.entry },

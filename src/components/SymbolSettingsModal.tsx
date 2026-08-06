@@ -25,30 +25,23 @@ const DAYS = [
 ]
 
 /**
- * Whole hours the window can be set to, 9 AM through 11 PM — the span that
- * covers both segments (NSE equity 09:15–15:30, MCX 09:00–23:30). Whole hours
- * only, deliberately: the window is a coarse "don't trade the chop" control,
- * and a dropdown of 15 choices is faster to set than a time field.
+ * Selectable 1-hour trading slots, 9 AM through 11 PM — the span that covers
+ * both segments (NSE equity 09:15–15:30, MCX 09:00–23:30).
  *
- * The exchange's own session is still the outer gate, so picking 9 AM for an
- * equity stock simply means "no extra restriction before the open".
+ * Each slot is INDEPENDENT, not a range: selecting 9, 10, 11 and 3 means the
+ * bot trades 09:00–11:59 and 15:00–15:59 and sits out everything between.
+ * That gap is the whole point — a From/To window cannot say "trade all day
+ * but skip 2pm", which is a perfectly ordinary thing to want.
+ *
+ * The exchange's own session is still the outer gate, so selecting 9 AM for
+ * an equity stock just means "no extra restriction before the open".
  */
-const HOURS = Array.from({ length: 15 }, (_, i) => {
+const HOUR_SLOTS = Array.from({ length: 15 }, (_, i) => {
   const h = i + 9
-  const suffix = h < 12 ? "AM" : "PM"
+  const suffix = h < 12 ? "am" : "pm"
   const display = h % 12 === 0 ? 12 : h % 12
-  return { value: `${String(h).padStart(2, "0")}:00`, label: `${display}:00 ${suffix}` }
+  return { hour: h, label: `${display}${suffix}` }
 })
-
-/** The hour options plus, if the stored value isn't a whole hour, that value
- *  itself — so a window saved before this was an hour picker (or set through
- *  the API) still displays and round-trips instead of silently resetting. */
-function hourOptions(current: string) {
-  if (!current || HOURS.some((h) => h.value === current)) return HOURS
-  return [...HOURS, { value: current, label: `${current} (custom)` }].sort((a, b) =>
-    a.value.localeCompare(b.value),
-  )
-}
 
 interface Props {
   mode: string
@@ -60,6 +53,27 @@ interface Props {
   /** Called with the full refreshed {symbol: config} map after a save/reset. */
   onSaved: (all: Record<string, SymbolConfig>) => void
   onClose: () => void
+}
+
+/** "9am-12pm, 3pm-4pm" — consecutive slots collapsed, each range ending at
+ *  the hour AFTER the last selected one, because selecting 3pm trades through
+ *  15:59. Mirrors symbol_config.format_hours() on the server. */
+function describeHours(hours: number[]): string {
+  if (hours.length === 0) return ""
+  const label = (h: number) => {
+    const n = h % 24
+    return `${n % 12 === 0 ? 12 : n % 12}${n < 12 ? "am" : "pm"}`
+  }
+  const sorted = [...hours].sort((a, b) => a - b)
+  const runs: [number, number][] = []
+  let start = sorted[0]
+  let prev = sorted[0]
+  for (const h of sorted.slice(1)) {
+    if (h === prev + 1) { prev = h; continue }
+    runs.push([start, prev]); start = prev = h
+  }
+  runs.push([start, prev])
+  return runs.map(([a, b]) => `${label(a)}-${label(b + 1)}`).join(", ")
 }
 
 export default function SymbolSettingsModal({
@@ -188,44 +202,65 @@ export default function SymbolSettingsModal({
         </section>
 
         <section className="mb-4">
-          <div className="mb-1 font-medium text-slate-300">Trading window (IST)</div>
-          <div className="flex items-center gap-2">
-            <label className="flex-1">
-              <span className="mb-0.5 block text-xs text-slate-400">From</span>
-              <select
-                value={cfg.start_time}
-                onChange={(e) => setCfg({ ...cfg, start_time: e.target.value })}
-                className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1 text-slate-100"
+          <div className="mb-1 flex items-center justify-between">
+            <span className="font-medium text-slate-300">Trading hours (IST)</span>
+            {cfg.trade_hours.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setCfg({ ...cfg, trade_hours: [] })}
+                className="text-[11px] text-slate-500 hover:text-slate-300"
               >
-                <option value="">Market open</option>
-                {hourOptions(cfg.start_time).map((h) => (
-                  <option key={h.value} value={h.value}>
-                    {h.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="flex-1">
-              <span className="mb-0.5 block text-xs text-slate-400">To</span>
-              <select
-                value={cfg.end_time}
-                onChange={(e) => setCfg({ ...cfg, end_time: e.target.value })}
-                className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1 text-slate-100"
-              >
-                <option value="">Market close</option>
-                {hourOptions(cfg.end_time).map((h) => (
-                  <option key={h.value} value={h.value}>
-                    {h.label}
-                  </option>
-                ))}
-              </select>
-            </label>
+                Clear all
+              </button>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-1">
+            {HOUR_SLOTS.map((slot) => {
+              const on = cfg.trade_hours.includes(slot.hour)
+              return (
+                <button
+                  key={slot.hour}
+                  type="button"
+                  aria-pressed={on}
+                  title={`${String(slot.hour).padStart(2, "0")}:00–${String(
+                    slot.hour,
+                  ).padStart(2, "0")}:59`}
+                  onClick={() =>
+                    setCfg({
+                      ...cfg,
+                      trade_hours: on
+                        ? cfg.trade_hours.filter((h) => h !== slot.hour)
+                        : [...cfg.trade_hours, slot.hour].sort((a, b) => a - b),
+                    })
+                  }
+                  className={`rounded-lg border px-2 py-1 text-xs ${
+                    on
+                      ? "border-indigo-500 bg-indigo-600 text-white"
+                      : "border-slate-700 bg-slate-950 text-slate-400 hover:border-slate-600"
+                  }`}
+                >
+                  {slot.label}
+                </button>
+              )
+            })}
           </div>
           <p className="mt-1 text-[11px] text-slate-500">
-            "Market open/close" = the exchange's own session hours. Outside this
-            window no NEW trade opens in this stock; positions already open keep
-            running to their stop/target as usual.
+            {cfg.trade_hours.length === 0
+              ? "None selected = trade the whole session (default)."
+              : `Selected: ${describeHours(cfg.trade_hours)}. Each button is one full hour — 3pm covers 15:00–15:59.`}
           </p>
+          <p className="mt-1 text-[11px] text-slate-500">
+            Deselect an hour to sit it out and resume at the next selected one.
+            Outside these hours no NEW trade opens in this stock; positions
+            already open keep running to their stop/target as usual.
+          </p>
+          {(cfg.start_time || cfg.end_time) && cfg.trade_hours.length === 0 && (
+            <p className="mt-1 text-[11px] text-amber-400">
+              This stock still uses an older From/To window (
+              {cfg.start_time || "open"}–{cfg.end_time || "close"}). Pick hours
+              above to replace it.
+            </p>
+          )}
           <label className="mt-2 flex items-start gap-2 text-slate-300">
             <input
               type="checkbox"
@@ -236,10 +271,11 @@ export default function SymbolSettingsModal({
               }
             />
             <span className="text-xs">
-              Also square off any open position when the window ends
+              Also square off any open position outside these hours
               <span className="block text-[11px] text-slate-500">
-                Off by default. On, the position is closed at market as soon as
-                the window lapses, instead of waiting for its stop or target.
+                Off by default. On, the position is closed at market as soon
+                as an unselected hour begins, instead of waiting for its stop
+                or target.
               </span>
             </span>
           </label>

@@ -69,6 +69,13 @@ export interface SignalRow {
   qty: number
   deployed: number
   reason: string
+  /** Whether the account actually acted on this signal. A qty=0 row is a
+   *  signal that fired but could not be funded — without this it looks
+   *  identical to a filled trade. Absent on rows recorded before this field
+   *  existed, which are treated as taken. */
+  status?: "TAKEN" | "SKIPPED"
+  /** Why it was skipped, when it was. */
+  skip_reason?: string
 }
 
 export interface DailyPnlRow {
@@ -137,6 +144,31 @@ export interface PlatformSignalsResponse {
   live: boolean
   mode: string
   signals: PlatformSignal[]
+}
+
+/** Asset classes trades are bucketed into. Crypto exists before any crypto
+ *  instrument does, so the reporting split is stable when it arrives. */
+export type Category = "Equity" | "Commodity" | "Crypto"
+
+export interface CategorySummary extends AnalyticsSummary {
+  category: Category
+}
+
+/** Result of POST /admin/trades/reset-range. With confirm=false this is a
+ *  PREVIEW: `matched` is what WOULD go and `removed` is 0. */
+export interface RangeResetResult {
+  matched: number
+  removed: number
+  dry_run: boolean
+  start: string
+  end: string
+  by_day: Record<string, number>
+  /** Trades in range the bot still holds OPEN — deleting these leaves a real
+   *  position with nothing tracking it. */
+  open_matched: number
+  environment: string
+  category: string
+  username: string
 }
 
 export interface BrokerPosition {
@@ -264,6 +296,10 @@ export interface AdminModeConfig {
   risk_reward: number
   /** Signal-score threshold for this mode. 0 = inherit the strategy's own. */
   min_score: number
+  /** End-of-session flat-out, "HH:MM" IST. "" = the segment default
+   *  (15:09 equity, 23:15 MCX). Ignored for Swing. */
+  square_off_time: string
+  square_off_enabled: boolean
 }
 
 export interface AdminBotConfig {
@@ -283,6 +319,9 @@ export interface AdminBotConfig {
 export interface SymbolConfig {
   /** Weekdays new entries may open on, 0=Mon … 6=Sun. [] = every day. */
   trade_days: number[]
+  /** HOURS (0-23 IST) new entries may open in. Hour H covers H:00–H:59, so
+   *  gaps are expressible: [9,10,11,15] skips 12:00–14:59. [] = no filter. */
+  trade_hours: number[]
   /** "HH:MM" IST. "" = the segment's own session open/close. */
   start_time: string
   end_time: string
@@ -294,6 +333,7 @@ export interface SymbolConfig {
 
 export const EMPTY_SYMBOL_CONFIG: SymbolConfig = {
   trade_days: [],
+  trade_hours: [],
   start_time: "",
   end_time: "",
   risk_reward: 0,
@@ -306,6 +346,7 @@ export const EMPTY_SYMBOL_CONFIG: SymbolConfig = {
 export function isDefaultSymbolConfig(c: SymbolConfig): boolean {
   return (
     c.trade_days.length === 0 &&
+    c.trade_hours.length === 0 &&
     !c.start_time &&
     !c.end_time &&
     !c.risk_reward &&

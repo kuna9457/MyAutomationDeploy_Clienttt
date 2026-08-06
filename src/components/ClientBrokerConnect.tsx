@@ -93,23 +93,39 @@ export default function ClientBrokerConnect({
             href={loginUrl}
             target="_blank"
             rel="noreferrer"
-            className="block w-full rounded-lg bg-slate-700 px-3 py-1.5 text-center text-xs text-slate-100 hover:bg-slate-600"
+            className="block w-full rounded-lg bg-indigo-600 px-3 py-1.5 text-center text-xs font-medium text-white hover:bg-indigo-500"
           >
-            1) Log in at {broker} ↗
+            Log in at {broker} ↗
           </a>
-          <input
-            className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
-            placeholder="2) Paste the redirected URL after logging in"
-            value={pasted}
-            onChange={(e) => setPasted(e.target.value)}
-          />
-          <button
-            onClick={connect}
-            disabled={busy || !pasted}
-            className="w-full rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
-          >
-            3) Connect
-          </button>
+          <p className="text-[11px] text-slate-500">
+            You'll be sent back here automatically once you've logged in — no
+            copying needed.
+          </p>
+          {/* The manual path is kept, but demoted: it is now the recovery
+              route for when the redirect can't complete (a mis-registered
+              Redirect URL, or an expired session on the callback tab), not
+              the normal flow. */}
+          <details className="text-[11px] text-slate-500">
+            <summary className="cursor-pointer hover:text-slate-300">
+              Didn't come back automatically?
+            </summary>
+            <p className="mt-1 mb-1">
+              Paste the full URL you landed on, or just the code from it.
+            </p>
+            <input
+              className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+              placeholder="Paste the redirected URL or code"
+              value={pasted}
+              onChange={(e) => setPasted(e.target.value)}
+            />
+            <button
+              onClick={connect}
+              disabled={busy || !pasted}
+              className="mt-1 w-full rounded-lg bg-slate-700 px-3 py-1.5 text-xs font-medium text-slate-100 hover:bg-slate-600 disabled:opacity-50"
+            >
+              Connect
+            </button>
+          </details>
         </>
       )}
       {msg && (

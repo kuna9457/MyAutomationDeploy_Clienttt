@@ -41,6 +41,15 @@ export default function Sidebar({ status, onChanged }: Props) {
   // own. Raising it takes fewer, higher-agreement setups; lowering it takes
   // more, weaker ones. Never affects position size or the risk cap.
   const [minScore, setMinScore] = useState(0)
+  // How many LOTS each commodity trades. Commodities are fixed-lot: the bot
+  // doesn't solve for quantity the way it does for equity, so this is the one
+  // number that decides commodity position size. Absent = 1 lot.
+  const [mcxLots, setMcxLots] = useState<Record<string, number>>({})
+  // End-of-session flat-out. "" = the segment's own default (15:09 equity).
+  // ON by default: an intraday position left past the close is squared by the
+  // broker at whatever the auction prints, or becomes an unfunded delivery.
+  const [squareOffTime, setSquareOffTime] = useState("")
+  const [squareOffEnabled, setSquareOffEnabled] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [brokerStatus, setBrokerStatus] = useState<Record<string, BrokerStatusEntry>>({})
@@ -113,6 +122,9 @@ export default function Sidebar({ status, onChanged }: Props) {
   // in force rather than resetting to "inherit" on every mode switch.
   useEffect(() => {
     setMinScore(botConfig?.by_mode?.[mode]?.min_score ?? 0)
+    setSquareOffTime(botConfig?.by_mode?.[mode]?.square_off_time ?? "")
+    setSquareOffEnabled(botConfig?.by_mode?.[mode]?.square_off_enabled ?? true)
+    setMcxLots(botConfig?.by_mode?.[mode]?.mcx_lots ?? {})
   }, [mode, botConfig])
 
   const universe = useMemo(
@@ -196,8 +208,10 @@ export default function Sidebar({ status, onChanged }: Props) {
         symbols,
         capital,
         broker: environment === "Live" ? broker : undefined,
-        mcx_lots: {},
+        mcx_lots: mcxLots,
         min_score: minScore,
+        square_off_time: squareOffTime,
+        square_off_enabled: squareOffEnabled,
       })
       onChanged()
     } catch (err) {
@@ -240,7 +254,7 @@ export default function Sidebar({ status, onChanged }: Props) {
         symbols,
         capital,
         min_score: minScore,
-        mcx_lots: {},
+        mcx_lots: mcxLots,
         symbol_configs: symbolConfigs,
       })
       setPresets(all)
@@ -267,6 +281,7 @@ export default function Sidebar({ status, onChanged }: Props) {
       setBroker(p.broker || BROKERS[0])
       setCapital(p.capital)
       setMinScore(p.min_score ?? 0)
+      setMcxLots(p.mcx_lots ?? {})
       setSegments(p.segments)
       setSymbols(p.symbols)
       setSymbolConfigs(p.symbol_configs)
@@ -319,8 +334,10 @@ export default function Sidebar({ status, onChanged }: Props) {
     setConfigMsg(null)
     try {
       const updated = await api.put<AdminBotConfig>("/admin/config", {
-        mode, strategy_key: strategyKey, segments, symbols, mcx_lots: {},
+        mode, strategy_key: strategyKey, segments, symbols, mcx_lots: mcxLots,
         min_score: minScore,
+        square_off_time: squareOffTime,
+        square_off_enabled: squareOffEnabled,
       })
       setBotConfig(updated)
       setConfigMsg(`Saved — clients who pick ${mode} now trade this.`)
@@ -650,6 +667,29 @@ export default function Sidebar({ status, onChanged }: Props) {
                       </span>
                     )}
                   </label>
+                  {/* Commodities are FIXED-LOT: unlike equity, the bot does
+                      not solve for quantity, so this number IS the position
+                      size. Shown inline per symbol because one lot of GOLD
+                      and one of NATGASMINI are wildly different commitments. */}
+                  {i.segment === "MCX_COMMODITY" && (
+                    <span className="flex items-center gap-1">
+                      <input
+                        type="number"
+                        min={0}
+                        step={1}
+                        value={mcxLots[i.symbol] ?? 1}
+                        disabled={running}
+                        title={`Lots of ${i.symbol} to trade per signal (0 = don't trade it)`}
+                        aria-label={`Lots for ${i.symbol}`}
+                        onChange={(e) => {
+                          const n = Math.max(0, Math.floor(Number(e.target.value) || 0))
+                          setMcxLots((prev) => ({ ...prev, [i.symbol]: n }))
+                        }}
+                        className="w-12 rounded border border-slate-700 bg-slate-950 px-1 py-0.5 text-right text-[11px] text-slate-100"
+                      />
+                      <span className="text-[10px] text-slate-500">lot</span>
+                    </span>
+                  )}
                   <button
                     type="button"
                     onClick={() => setSettingsFor(i.symbol)}
@@ -669,6 +709,14 @@ export default function Sidebar({ status, onChanged }: Props) {
           ⚙️ sets a stock's own trading days, time window and risk:reward for{" "}
           {mode}. Stocks without it trade exactly as the strategy says.
         </p>
+        {segments.includes("MCX_COMMODITY") && (
+          <p className="mt-1 text-[11px] text-slate-500">
+            Commodities trade a FIXED number of lots — set it per symbol above
+            (0 = skip that commodity). Margin is fetched live from your broker
+            at every signal, and the trade is refused if the account can't fund
+            it. Risk = lots × stop distance × contract size.
+          </p>
+        )}
 
         {hiddenSelectedCount > 0 && (
           <p className="mt-1 text-[11px] text-slate-500">
@@ -678,6 +726,47 @@ export default function Sidebar({ status, onChanged }: Props) {
           </p>
         )}
       </section>
+
+      {mode !== "Swing" && (
+        <section>
+          <div className="mb-1 font-medium text-slate-300">🔔 Square Off ({mode})</div>
+          <label className="mb-1 flex items-start gap-2 text-slate-300">
+            <input
+              type="checkbox"
+              className="mt-1"
+              checked={squareOffEnabled}
+              disabled={running}
+              onChange={(e) => setSquareOffEnabled(e.target.checked)}
+            />
+            <span className="text-xs">
+              Close every open position before the session ends
+            </span>
+          </label>
+          {squareOffEnabled && (
+            <>
+              <input
+                type="time"
+                value={squareOffTime}
+                disabled={running}
+                onChange={(e) => setSquareOffTime(e.target.value)}
+                className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1 text-slate-100"
+              />
+              <p className="mt-1 text-[11px] text-slate-500">
+                {squareOffTime
+                  ? `Everything is flat by ${squareOffTime}, profit or loss.`
+                  : "Blank = 15:09 for NSE equity, 23:15 for MCX — ahead of the close and of your broker's own auto-square-off."}
+              </p>
+            </>
+          )}
+          {!squareOffEnabled && (
+            <p className="mt-1 text-[11px] text-amber-400">
+              ⚠️ Off — positions can run into the close. Your broker will
+              square them itself at whatever the auction prints, or a cash
+              position becomes a delivery.
+            </p>
+          )}
+        </section>
+      )}
 
       <section>
         <div className="mb-1 font-medium text-slate-300">Total Capital (₹)</div>
