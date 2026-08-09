@@ -78,14 +78,35 @@ export interface SignalRow {
   skip_reason?: string
 }
 
-export interface DailyPnlRow {
-  Date: string
+/** Shared shape of every P&L breakdown row (day, strategy, day×strategy).
+ *  `Symbols` counts DISTINCT instruments, which is not the trade count. */
+export interface PerfRow {
+  Symbols: number
   Trades: number
   Closed: number
   Open: number
   Wins: number
   "Win Rate %": number
   "Realized PnL (₹)": number
+}
+
+export interface DailyPnlRow extends PerfRow {
+  Date: string
+  /** Every strategy that traded this day, comma-joined. When more than one
+   *  did, DailyStrategyPnlRow splits the day's PnL between them. */
+  Strategies: string
+}
+
+/** All-time P&L for one strategy (GET /trades/by-strategy). */
+export interface StrategyPnlRow extends PerfRow {
+  Strategy: string
+}
+
+/** One trading day × one strategy (GET /trades/daily-strategy-pnl). Each
+ *  day's rows sum to that day's DailyPnlRow total. */
+export interface DailyStrategyPnlRow extends PerfRow {
+  Date: string
+  Strategy: string
 }
 
 export interface RiskStatus {
@@ -118,6 +139,8 @@ export interface BotStatus {
   unrealized_pnl?: number
   trading_day?: string
   daily_pnl?: DailyPnlRow[]
+  strategy_pnl?: StrategyPnlRow[]
+  daily_strategy_pnl?: DailyStrategyPnlRow[]
   log?: string[]
   risk_status?: RiskStatus
 }
@@ -280,6 +303,8 @@ export interface ClientStats {
   running: boolean
   summary: AnalyticsSummary
   daily_pnl: DailyPnlRow[]
+  strategy_pnl: StrategyPnlRow[]
+  daily_strategy_pnl: DailyStrategyPnlRow[]
   trades: TradeRow[]
 }
 

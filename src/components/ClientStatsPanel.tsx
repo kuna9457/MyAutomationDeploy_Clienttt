@@ -127,9 +127,39 @@ export default function ClientStatsPanel({
               empty={`No ${environment} trading days yet for this client.`}
               columns={[
                 { key: "d", header: "Date", render: (r) => r.Date },
+                { key: "s", header: "Strategies", render: (r) => r.Strategies || "—" },
+                { key: "sy", header: "Symbols", render: (r) => r.Symbols },
                 { key: "t", header: "Trades", render: (r) => r.Trades },
                 { key: "c", header: "Closed", render: (r) => r.Closed },
                 { key: "o", header: "Open", render: (r) => r.Open },
+                { key: "w", header: "Wins", render: (r) => r.Wins },
+                { key: "wr", header: "Win %", render: (r) => r["Win Rate %"] },
+                {
+                  key: "p",
+                  header: "Realized PnL (₹)",
+                  render: (r) => (
+                    <span className={pnlClass(r["Realized PnL (₹)"])}>
+                      {inr(r["Realized PnL (₹)"])}
+                    </span>
+                  ),
+                },
+              ]}
+            />
+          </div>
+
+          <div>
+            <h4 className="mb-2 text-xs font-semibold text-slate-300">
+              Per-strategy PnL
+            </h4>
+            <DataTable
+              rows={stats.strategy_pnl ?? []}
+              rowKey={(r) => String(r.Strategy)}
+              empty={`No ${environment} trades to attribute for this client.`}
+              columns={[
+                { key: "s", header: "Strategy", render: (r) => r.Strategy },
+                { key: "sy", header: "Symbols", render: (r) => r.Symbols },
+                { key: "t", header: "Trades", render: (r) => r.Trades },
+                { key: "c", header: "Closed", render: (r) => r.Closed },
                 { key: "w", header: "Wins", render: (r) => r.Wins },
                 { key: "wr", header: "Win %", render: (r) => r["Win Rate %"] },
                 {

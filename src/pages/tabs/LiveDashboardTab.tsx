@@ -44,6 +44,8 @@ export default function LiveDashboardTab({
   const quotes = Object.values(status.live_quotes ?? {})
   const signals = status.last_signals ?? []
   const daily = status.daily_pnl ?? []
+  const byStrategy = status.strategy_pnl ?? []
+  const dailyByStrategy = status.daily_strategy_pnl ?? []
 
   return (
     <div className="space-y-6">
@@ -145,12 +147,65 @@ export default function LiveDashboardTab({
           empty="No trading days recorded yet."
           columns={[
             { key: "date", header: "Date", render: (r) => r.Date },
+            // Which edges ran that day. The split of the day's money between
+            // them is the table below.
+            { key: "strats", header: "Strategies", render: (r) => r.Strategies || "—" },
+            { key: "symbols", header: "Symbols", render: (r) => r.Symbols },
             { key: "trades", header: "Trades", render: (r) => r.Trades },
             { key: "closed", header: "Closed", render: (r) => r.Closed },
             { key: "open", header: "Open", render: (r) => r.Open },
             { key: "wins", header: "Wins", render: (r) => r.Wins },
             { key: "wr", header: "Win Rate %", render: (r) => r["Win Rate %"] },
-            { key: "pnl", header: "Realized PnL (₹)", render: (r) => r["Realized PnL (₹)"].toLocaleString("en-IN") },
+            { key: "pnl", header: "Realized PnL (₹)", render: (r) => <Pnl v={r["Realized PnL (₹)"]} /> },
+          ]}
+        />
+      </div>
+
+      <div>
+        <h3 className="mb-2 text-sm font-semibold text-slate-200">🎯 Strategy-wise PnL</h3>
+        <p className="mb-2 text-xs text-slate-500">
+          All-time, best first — which strategy actually earns. Symbols counts distinct
+          instruments traded, not the number of trades.
+        </p>
+        <DataTable
+          rows={byStrategy}
+          rowKey={(r) => r.Strategy}
+          empty="No closed trades yet — nothing to attribute."
+          columns={[
+            { key: "strat", header: "Strategy", render: (r) => r.Strategy },
+            { key: "symbols", header: "Symbols", render: (r) => r.Symbols },
+            { key: "trades", header: "Trades", render: (r) => r.Trades },
+            { key: "closed", header: "Closed", render: (r) => r.Closed },
+            { key: "open", header: "Open", render: (r) => r.Open },
+            { key: "wins", header: "Wins", render: (r) => r.Wins },
+            { key: "wr", header: "Win Rate %", render: (r) => r["Win Rate %"] },
+            { key: "pnl", header: "Realized PnL (₹)", render: (r) => <Pnl v={r["Realized PnL (₹)"]} /> },
+          ]}
+        />
+      </div>
+
+      <div>
+        <h3 className="mb-2 text-sm font-semibold text-slate-200">
+          🗓️ Day-wise PnL by Strategy
+        </h3>
+        <p className="mb-2 text-xs text-slate-500">
+          On this day, this strategy traded these symbols and made this much. Each day's
+          rows add up to that day's total above.
+        </p>
+        <DataTable
+          rows={dailyByStrategy}
+          rowKey={(r) => `${r.Date}-${r.Strategy}`}
+          empty="No trading days recorded yet."
+          columns={[
+            { key: "date", header: "Date", render: (r) => r.Date },
+            { key: "strat", header: "Strategy", render: (r) => r.Strategy },
+            { key: "symbols", header: "Symbols", render: (r) => r.Symbols },
+            { key: "trades", header: "Trades", render: (r) => r.Trades },
+            { key: "closed", header: "Closed", render: (r) => r.Closed },
+            { key: "open", header: "Open", render: (r) => r.Open },
+            { key: "wins", header: "Wins", render: (r) => r.Wins },
+            { key: "wr", header: "Win Rate %", render: (r) => r["Win Rate %"] },
+            { key: "pnl", header: "Realized PnL (₹)", render: (r) => <Pnl v={r["Realized PnL (₹)"]} /> },
           ]}
         />
       </div>
@@ -160,6 +215,13 @@ export default function LiveDashboardTab({
       </p>
     </div>
   )
+}
+
+/** A rupee figure coloured by sign — so a losing strategy is visible at a
+ *  glance rather than needing the minus sign to be read. */
+function Pnl({ v }: { v: number }) {
+  const cls = v > 0 ? "text-emerald-400" : v < 0 ? "text-rose-400" : "text-slate-300"
+  return <span className={cls}>{v.toLocaleString("en-IN")}</span>
 }
 
 function StatChip({ label, value }: { label: string; value: string }) {
