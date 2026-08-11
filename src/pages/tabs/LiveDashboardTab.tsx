@@ -1,5 +1,6 @@
 import PnLHeader from "../../components/PnLHeader"
 import DataTable from "../../components/DataTable"
+import RunConfigPanel from "../../components/RunConfigPanel"
 import { phaseLabel } from "../../lib/modes"
 import type { BotStatus } from "../../lib/types"
 
@@ -50,6 +51,8 @@ export default function LiveDashboardTab({
   return (
     <div className="space-y-6">
       <PnLHeader status={status} />
+
+      <RunConfigPanel cfg={status.run_config} />
 
       <div
         className={`grid grid-cols-2 gap-3 ${

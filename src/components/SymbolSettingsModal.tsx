@@ -302,6 +302,49 @@ export default function SymbolSettingsModal({
           </p>
         </section>
 
+        <section className="mb-4">
+          <div className="mb-1 font-medium text-slate-300">Trailing stop-loss</div>
+          <label className="flex items-start gap-2 text-slate-300">
+            <input
+              type="checkbox"
+              className="mt-1"
+              checked={!!cfg.trail_enabled}
+              onChange={(e) => setCfg({ ...cfg, trail_enabled: e.target.checked })}
+            />
+            <span className="text-xs">
+              Trail this stock's stop behind the best price reached
+              <span className="block text-[11px] text-slate-500">
+                Off by default. On, the stop follows the high-water mark at a
+                fixed ATR distance and only ever moves in your favour — it
+                never widens, and never moves past the live price.
+              </span>
+            </span>
+          </label>
+          {cfg.trail_enabled && (
+            <div className="mt-2">
+              <label className="block text-xs text-slate-400">
+                Distance behind the peak (× ATR)
+              </label>
+              <input
+                type="number"
+                min={0}
+                max={20}
+                step={0.1}
+                value={cfg.trail_atr_mult ?? 0}
+                onChange={(e) =>
+                  setCfg({ ...cfg, trail_atr_mult: Number(e.target.value) })
+                }
+                className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-slate-100"
+              />
+              <p className="mt-1 text-[11px] text-slate-500">
+                0 = use the strategy's own ATR multiple, the same one its entry
+                stop was built from. Smaller trails tighter and exits sooner;
+                larger gives the trade more room.
+              </p>
+            </div>
+          )}
+        </section>
+
         {error && <p className="mb-2 text-xs text-red-400">{error}</p>}
 
         <div className="flex gap-2">

@@ -121,8 +121,43 @@ export interface RiskStatus {
   halt_reason?: string
 }
 
+/** The settings a running bot was STARTED with — frozen at start (see
+ *  engine._snapshot_run_config), not a live read of saved config. Changing a
+ *  preset or a per-stock setting never reaches a running engine, so this is
+ *  the only honest answer to "what is actually running right now".
+ *
+ *  Fields that describe HOW the strategy decides (strategy, atr_*, min_score,
+ *  entry_skip_minutes, use_limit_entry) are stripped for client accounts by
+ *  the status route, so they are optional here. */
+export interface RunConfig {
+  started_at: string
+  environment: string
+  mode: string
+  broker: string
+  strategy?: { key: string; name: string }
+  timeframe: string
+  capital: number
+  risk_per_trade_pct: number
+  risk_reward: number
+  atr_sl_mult?: number
+  atr_period?: number
+  min_score?: number
+  max_hold_minutes: number
+  entry_skip_minutes?: number
+  allow_short: boolean
+  use_limit_entry?: boolean
+  square_off_enabled: boolean
+  square_off_time: string
+  instruments: string[]
+  mcx_lots: Record<string, number>
+  /** One line per symbol that deviates, in SymbolRules.describe()'s words. */
+  symbol_overrides: string[]
+  shared_with: number
+}
+
 export interface BotStatus {
   started: boolean
+  run_config?: RunConfig
   environment?: string
   mode?: string
   strategy?: { key: string; name: string }
@@ -201,6 +236,22 @@ export interface BrokerPosition {
   average_price: number
   last_price: number
   pnl: number
+}
+
+/** An SL/TP the BROKER is holding — read back from the broker, not from what
+ *  the bot believes it armed, so the two can be compared. `symbol` is the
+ *  broker's own tradingsymbol and joins to BrokerPosition.symbol. `side` is
+ *  the protective order's own (exit) side. `target` is 0 for kind "SLM",
+ *  which carries no take-profit leg. */
+export interface BrokerProtection {
+  symbol: string
+  side: string
+  quantity: number
+  kind: "GTT" | "SLM"
+  stop: number
+  target: number
+  status: string
+  id: string
 }
 
 export interface RiskLimits {
@@ -354,6 +405,11 @@ export interface SymbolConfig {
   risk_reward: number
   /** Close an open position when the window ends. Default false. */
   square_off_at_end: boolean
+  /** Trail this stock's stop behind the best price reached. Default false. */
+  trail_enabled: boolean
+  /** ATR multiple the trail sits behind the peak. 0 = inherit the strategy's
+   *  own atr_sl_mult. Inert unless trail_enabled. */
+  trail_atr_mult: number
 }
 
 export const EMPTY_SYMBOL_CONFIG: SymbolConfig = {
@@ -363,6 +419,8 @@ export const EMPTY_SYMBOL_CONFIG: SymbolConfig = {
   end_time: "",
   risk_reward: 0,
   square_off_at_end: false,
+  trail_enabled: false,
+  trail_atr_mult: 0,
 }
 
 /** True when this config would change nothing — mirrors
@@ -375,7 +433,11 @@ export function isDefaultSymbolConfig(c: SymbolConfig): boolean {
     !c.start_time &&
     !c.end_time &&
     !c.risk_reward &&
-    !c.square_off_at_end
+    !c.square_off_at_end &&
+    // trail_atr_mult is deliberately NOT tested: it is inert without
+    // trail_enabled, so a multiple left behind by a toggled-off trail must
+    // still count as "no settings" and delete the entry. Mirrors is_noop().
+    !c.trail_enabled
   )
 }
 

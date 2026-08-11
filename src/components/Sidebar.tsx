@@ -944,6 +944,10 @@ function describeSymbolConfig(c: SymbolConfig): string {
         (c.square_off_at_end ? " (square off at end)" : ""),
     )
   if (c.risk_reward > 0) bits.push(`RR 1:${c.risk_reward}`)
+  if (c.trail_enabled)
+    bits.push(
+      `trailing SL${c.trail_atr_mult > 0 ? ` ${c.trail_atr_mult}×ATR` : ""}`,
+    )
   return bits.join(" · ")
 }
 
