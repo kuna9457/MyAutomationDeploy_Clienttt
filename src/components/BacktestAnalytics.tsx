@@ -34,6 +34,21 @@ const GRID = "#1e293b"
 const inr = (n: number) =>
   `${n < 0 ? "-" : ""}₹${Math.abs(Math.round(n)).toLocaleString("en-IN")}`
 
+/* Recharts types a LabelList formatter as
+ *     (label: RenderableText) => RenderableText
+ * where RenderableText is string | number | boolean | null | undefined.
+ * A `(v: number) => string` is too NARROW to satisfy that under
+ * strictFunctionTypes, so these helpers take the full union and coerce. Axis
+ * tickFormatter is a separate, number-typed prop and needs no such widening —
+ * which is why `inr` is still used directly there. */
+type LabelArg = string | number | boolean | null | undefined
+
+const toNum = (v: LabelArg): number =>
+  typeof v === "number" ? v : Number(v ?? 0) || 0
+
+const inrLabel = (v: LabelArg): string => inr(toNum(v))
+const pctLabel = (v: LabelArg): string => `${toNum(v)}%`
+
 function ChartCard({
   title,
   hint,
@@ -94,7 +109,7 @@ function PnlBars({ data }: { data: AnalyticsBucket[] }) {
           <LabelList
             dataKey="pnl"
             position="top"
-            formatter={(v: number) => inr(v)}
+            formatter={inrLabel}
             style={{ fill: AXIS, fontSize: 10 }}
           />
         </Bar>
@@ -167,7 +182,7 @@ export default function BacktestAnalytics({ a }: { a: TradeAnalytics }) {
                 <LabelList
                   dataKey="pnl"
                   position="right"
-                  formatter={(v: number) => inr(v)}
+                  formatter={inrLabel}
                   style={{ fill: AXIS, fontSize: 10 }}
                 />
               </Bar>
@@ -214,7 +229,7 @@ export default function BacktestAnalytics({ a }: { a: TradeAnalytics }) {
                 <LabelList
                   dataKey="win_rate"
                   position="top"
-                  formatter={(v: number) => `${v}%`}
+                  formatter={pctLabel}
                   style={{ fill: AXIS, fontSize: 10 }}
                 />
               </Bar>
