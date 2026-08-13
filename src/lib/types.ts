@@ -158,6 +158,60 @@ export interface RunConfig {
 /** One strategy and the stocks assigned to it (GET/PUT /admin/strategy-groups).
  *  A symbol may appear in several groups; only one trade in it opens at a
  *  time, enforced at execution by capital_ledger. */
+/* -- Trade charts (replay a trade on the candles it was taken on) ---------- */
+
+/** One symbol the bot traded in the chosen window. */
+export interface ChartSymbol {
+  symbol: string
+  trades: number
+  pnl: number
+  wins: number
+  win_rate: number
+  mode: string
+  category: string
+  first_trade: string
+  last_trade: string
+}
+
+export interface ChartBar {
+  time: number
+  open: number
+  high: number
+  low: number
+  close: number
+  volume: number
+}
+
+export interface ChartTrade {
+  id: string
+  side: string
+  entry_time: number
+  entry_price: number
+  /** null while a position is still open at the right edge of the data. */
+  exit_time: number | null
+  exit_price: number | null
+  stop_loss: number | null
+  target: number | null
+  quantity: number
+  pnl: number
+  win: boolean
+  strategy: string
+  mode: string
+  entry_reason: string
+  exit_reason: string
+}
+
+export interface ChartCandles {
+  symbol: string
+  interval: string
+  mode: string
+  source: string
+  candles: ChartBar[]
+  trades: ChartTrade[]
+  /** false when history fell back to a synthetic random walk. */
+  is_real_data: boolean
+}
+
 /* -- AI Auditor (read-only LLM review of past trades) ---------------------- */
 
 export interface AuditProviderInfo {
