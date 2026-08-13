@@ -2,6 +2,7 @@ import { useEffect, useState } from "react"
 import { api, ApiError } from "../lib/api"
 import ClientBrokerConnect from "./ClientBrokerConnect"
 import ClientBrokerCredentials from "./ClientBrokerCredentials"
+import NumberInput from "./NumberInput"
 import type { BotStatus, ClientModeInfo, RiskLimits } from "../lib/types"
 
 const CLIENT_LIVE_BROKERS = ["Upstox", "Zerodha"] as const
@@ -192,13 +193,13 @@ export default function ClientSidebar({ status, onChanged }: Props) {
         <div className="mb-1 font-medium text-slate-300">
           Capital to allocate for trading (₹)
         </div>
-        <input
-          type="number"
+        <NumberInput
           className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-slate-100"
           value={capital}
           min={0}
           step={5000}
-          onChange={(e) => setCapital(Number(e.target.value))}
+          onChange={setCapital}
+          ariaLabel="Capital to allocate for trading"
         />
         <p className="mt-1 text-[11px] text-slate-500">
           The bot only ever deploys up to this much, never your whole broker balance.
@@ -269,12 +270,14 @@ function RiskField({
   return (
     <div className="mb-2">
       <label className="mb-0.5 block text-xs text-slate-400">{label}</label>
-      <input
-        type="number"
+      {/* See Sidebar's RiskField: 0 means "no limit", so the box must be
+          clearable without a stray zero snapping back into it. */}
+      <NumberInput
         step={step}
         className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1 text-sm text-slate-100"
         value={value}
-        onChange={(e) => onChange(Number(e.target.value))}
+        onChange={onChange}
+        ariaLabel={label}
       />
     </div>
   )

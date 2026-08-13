@@ -155,9 +155,166 @@ export interface RunConfig {
   shared_with: number
 }
 
+/** One strategy and the stocks assigned to it (GET/PUT /admin/strategy-groups).
+ *  A symbol may appear in several groups; only one trade in it opens at a
+ *  time, enforced at execution by capital_ledger. */
+/* -- AI Auditor (read-only LLM review of past trades) ---------------------- */
+
+export interface AuditProviderInfo {
+  name: string
+  available: boolean
+  model: string
+}
+
+export interface AuditRecommendation {
+  priority: number
+  lever: string
+  scope: string
+  current: string
+  proposed: string
+  rationale: string
+  evidence: string
+  expected_effect: string
+  risk_of_change: string
+  how_to_verify: string
+}
+
+export interface AuditFinding {
+  claim: string
+  evidence: string
+  sample: number
+}
+
+export interface AuditReportBody {
+  verdict: "LOSING" | "MARGINAL" | "PROFITABLE" | "INSUFFICIENT_DATA"
+  headline: string
+  confidence: "low" | "medium" | "high"
+  confidence_reason: string
+  what_is_working: AuditFinding[]
+  what_is_broken: AuditFinding[]
+  recommendations: AuditRecommendation[]
+  do_not_change: { item: string; why: string }[]
+  data_gaps: string[]
+}
+
+/** A saved audit. `unverified_numbers` lists figures in the report that do NOT
+ *  appear in the pack — i.e. the model computed something it was told not to. */
+export interface AuditReport {
+  id: string
+  created_at: string
+  environment: string
+  window: { from: string; to: string }
+  provider: string
+  model: string
+  closed_trades: number
+  pack_bytes: number
+  pack_hash?: string
+  verdict: string
+  headline: string
+  report?: AuditReportBody
+  unverified_numbers?: string[]
+  error?: string
+  /** Every provider tried, in order, with the reason each failed. */
+  attempts?: { provider: string; model: string; ok: boolean; error: string }[]
+  /** True when the preferred provider failed and another answered instead. */
+  fell_back?: boolean
+}
+
+export interface AuditPreview {
+  pack: Record<string, unknown>
+  bytes: number
+  closed_trades: number
+}
+
+/** One bucket of a trade-log cut (weekday, hour, setup or side). */
+export interface AnalyticsBucket {
+  key: string | number
+  label: string
+  pnl: number
+  trades: number
+  wins: number
+  win_rate: number
+}
+
+/** Cuts of the trade log for the analytics charts, computed server-side from
+ *  the same trade rows the run returns — so charts and tables cannot disagree. */
+export interface TradeAnalytics {
+  by_weekday: AnalyticsBucket[]
+  by_hour: AnalyticsBucket[]
+  by_setup: AnalyticsBucket[]
+  by_side: AnalyticsBucket[]
+  insights: string[]
+  total_trades: number
+}
+
+/** One symbol's row in a bulk run, ranked by return. */
+export interface BulkRankRow {
+  Ticker: string
+  "Total Return %": number
+  "Max Drawdown %": number
+  Sharpe: number
+  Calmar: number
+  "Win Rate %": number
+  Trades: number
+  "Final Equity": number
+  "Data Source": string
+}
+
+export interface BulkBacktestResult {
+  ranking: BulkRankRow[]
+  analytics: TradeAnalytics
+  filters: string
+  tickers: number
+}
+
+/** One RR rung of a sweep (POST /backtest/rr-sweep). `error` is non-empty when
+ *  that single RR failed — the sweep keeps the rows it did compute. */
+export interface RRSweepRow {
+  risk_reward: number
+  trades: number
+  return_pct: number
+  win_rate: number
+  max_drawdown: number
+  sharpe: number
+  calmar: number
+  final_equity: number
+  data_source: string
+  error: string
+}
+
+export interface RRSweepResult {
+  rows: RRSweepRow[]
+  /** RR with the highest return, or null if every rung failed. */
+  best_by_return: number | null
+}
+
+export interface StrategyGroup {
+  strategy_key: string
+  symbols: string[]
+  mcx_lots: Record<string, number>
+  /** 0 = use the strategy's own. */
+  risk_reward: number
+  /** 0 = use the strategy's own. */
+  min_score: number
+  enabled: boolean
+}
+
+/** Per-strategy breakdown in /bot/status when a board is running. Absent for
+ *  a single-strategy run. */
+export interface GroupStatus {
+  strategy_key: string
+  strategy_name: string
+  running: boolean
+  symbols: string[]
+  open: string[]
+  day_pnl: number
+  risk_reward: number
+}
+
 export interface BotStatus {
   started: boolean
   run_config?: RunConfig
+  groups?: GroupStatus[]
   environment?: string
   mode?: string
   strategy?: { key: string; name: string }
@@ -317,6 +474,9 @@ export interface BacktestResult {
   metrics: Record<string, number | string>
   equity_curve: { t: string; equity: number }[]
   trades: Record<string, unknown>[]
+  analytics?: TradeAnalytics
+  /** Human summary of the entry filters applied, "" when unrestricted. */
+  filters?: string
 }
 
 export interface ClientUser {
@@ -383,6 +543,18 @@ export interface AdminBotConfig {
   by_mode: Record<string, AdminModeConfig>
   /** modes admin offers in the client's Start Bot picker */
   client_modes: string[]
+  /** Start every eligible client when admin starts, publishing that run as
+   *  the config clients follow. Absent on servers predating the field, which
+   *  reads as off. */
+  auto_start_clients?: boolean
+}
+
+/** Fan-out summary returned by POST /bot/start when admin auto-starts
+ *  clients. `skipped` names each account that did NOT start and why. */
+export interface ClientStartSummary {
+  total: number
+  started: string[]
+  skipped: { username: string; reason: string }[]
 }
 
 /**

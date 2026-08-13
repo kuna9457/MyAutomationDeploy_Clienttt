@@ -2,15 +2,19 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { api, ApiError } from "../lib/api"
 import { CLIENT_SELECTABLE_MODES, MODE_LABELS as CLIENT_MODE_LABELS } from "../lib/modes"
 import BrokerLoginPanel from "./BrokerLoginPanel"
+import NumberInput from "./NumberInput"
+import StrategyBoard from "./StrategyBoard"
 import SymbolSettingsModal from "./SymbolSettingsModal"
 import { EMPTY_SYMBOL_CONFIG, type SymbolConfig } from "../lib/types"
 import type {
   AdminBotConfig,
   BotStatus,
   BrokerStatusEntry,
+  ClientStartSummary,
   ControlPreset,
   Instrument,
   RiskLimits,
+  StrategyGroup,
   StrategyInfo,
 } from "../lib/types"
 
@@ -61,6 +65,12 @@ export default function Sidebar({ status, onChanged }: Props) {
   // means "trades the way the strategy says".
   const [symbolConfigs, setSymbolConfigs] = useState<Record<string, SymbolConfig>>({})
   const [rrChoices, setRrChoices] = useState<{ value: number; label: string }[]>([])
+  // Result of the last Start's client fan-out, or null when admin started
+  // alone (auto-start off, or a mode clients can't run).
+  const [clientStart, setClientStart] = useState<ClientStartSummary | null>(null)
+  // The strategy board for the CURRENT mode. Empty = no board, and Start Bot
+  // takes the original single-strategy path.
+  const [groups, setGroups] = useState<StrategyGroup[]>([])
   const [settingsFor, setSettingsFor] = useState<string | null>(null)
   // Saved Controls presets: the whole panel under a name.
   const [presets, setPresets] = useState<Record<string, ControlPreset>>({})
@@ -99,6 +109,17 @@ export default function Sidebar({ status, onChanged }: Props) {
       .catch(() => setSymbolConfigs({}))
   }, [mode])
 
+  // The strategy board is per mode for the same reason: a strategy is bound to
+  // a mode, so an Intraday board and a Scalper board are different boards. A
+  // failure reads as "no board", which is the safe state — Start Bot then
+  // takes the single-strategy path rather than half a board.
+  useEffect(() => {
+    api
+      .get<StrategyGroup[]>(`/admin/strategy-groups?mode=${mode}`)
+      .then(setGroups)
+      .catch(() => setGroups([]))
+  }, [mode])
+
   useEffect(() => {
     api
       .get<StrategyInfo[]>(`/config/strategies?mode=${mode}`)
@@ -127,12 +148,39 @@ export default function Sidebar({ status, onChanged }: Props) {
     setMcxLots(botConfig?.by_mode?.[mode]?.mcx_lots ?? {})
   }, [mode, botConfig])
 
-  const universe = useMemo(
-    () => instruments.filter((i) => segments.includes(i.segment)),
-    [instruments, segments],
-  )
+  // Every stock on the board, in board order, deduplicated across strategies.
+  // Includes PAUSED groups on purpose: pausing a strategy should not hide its
+  // stocks from the ⚙️ per-stock settings you already set up for them.
+  const boardSymbols = useMemo(() => {
+    const seen: string[] = []
+    for (const g of groups)
+      for (const s of g.symbols) if (!seen.includes(s)) seen.push(s)
+    return seen
+  }, [groups])
+  const boardActive = groups.length > 0
+
+  const universe = useMemo(() => {
+    const inSegments = instruments.filter((i) => segments.includes(i.segment))
+    if (!boardActive) return inSegments
+    // A board stock may sit outside the currently ticked segments (you can drop
+    // a commodity onto a strategy while the Segments filter shows equity). It
+    // still has to be LISTED, or its ⚙️ becomes unreachable and the per-stock
+    // settings for a stock that is genuinely trading could not be edited.
+    const shown = new Set(inSegments.map((i) => i.symbol))
+    const extra = instruments.filter(
+      (i) => boardSymbols.includes(i.symbol) && !shown.has(i.symbol),
+    )
+    return [...inSegments, ...extra]
+  }, [instruments, segments, boardActive, boardSymbols])
 
   useEffect(() => {
+    // With a board, the board IS the selection — dragging a stock onto a
+    // strategy selects it here automatically, so there is nothing to pick by
+    // hand and nothing to prune when the segment filter changes.
+    if (boardActive) {
+      setSymbols(boardSymbols)
+      return
+    }
     setSymbols((prev) => {
       const allowed = new Set(universe.map((i) => i.symbol))
       const kept = prev.filter((s) => allowed.has(s))
@@ -140,7 +188,7 @@ export default function Sidebar({ status, onChanged }: Props) {
       return universe.slice(0, 10).map((i) => i.symbol)
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [universe])
+  }, [universe, boardActive, boardSymbols])
 
   // Purely a view filter over `universe` — it never touches `symbols`, so
   // searching can't silently drop instruments you already ticked.
@@ -193,14 +241,21 @@ export default function Sidebar({ status, onChanged }: Props) {
   const running = !!status?.running
 
   const start = async () => {
+    // With a board, instruments come from the groups, so an empty flat list is
+    // only a problem when no group has any stocks either.
     if (symbols.length === 0) {
-      setError("Select at least one instrument.")
+      setError(
+        boardActive
+          ? "Drag at least one stock onto a strategy."
+          : "Select at least one instrument.",
+      )
       return
     }
     setBusy(true)
     setError(null)
+    setClientStart(null)
     try {
-      await api.post("/bot/start", {
+      const res = await api.post<{ clients?: ClientStartSummary }>("/bot/start", {
         environment,
         mode,
         strategy_key: strategyKey,
@@ -213,6 +268,7 @@ export default function Sidebar({ status, onChanged }: Props) {
         square_off_time: squareOffTime,
         square_off_enabled: squareOffEnabled,
       })
+      setClientStart(res?.clients ?? null)
       onChanged()
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to start bot.")
@@ -360,6 +416,23 @@ export default function Sidebar({ status, onChanged }: Props) {
       setBotConfig(updated)
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to update client modes.")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const toggleAutoStart = async () => {
+    const next = !(botConfig?.auto_start_clients ?? false)
+    setBusy(true)
+    setConfigMsg(null)
+    try {
+      const updated = await api.put<AdminBotConfig>(
+        `/admin/config/auto-start-clients?enabled=${next}`,
+        {},
+      )
+      setBotConfig(updated)
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to update auto-start.")
     } finally {
       setBusy(false)
     }
@@ -619,7 +692,16 @@ export default function Sidebar({ status, onChanged }: Props) {
           )}
         </div>
 
-        {visibleUniverse.length > 0 && (
+        {boardActive && (
+          <p className="mb-1 rounded border border-sky-900 bg-sky-950/40 px-2 py-1 text-[11px] text-sky-300">
+            Picked by the multi-strategy board below — whatever you drag onto a
+            strategy is ticked here automatically. Use ⚙️ to set a stock's own
+            days, hours, RR and trailing stop; those apply exactly as before,
+            whichever strategy trades it.
+          </p>
+        )}
+
+        {visibleUniverse.length > 0 && !boardActive && (
           <label className="mb-1 flex items-center gap-2 text-xs text-slate-400">
             <input
               type="checkbox"
@@ -655,9 +737,27 @@ export default function Sidebar({ status, onChanged }: Props) {
                     <input
                       type="checkbox"
                       checked={symbols.includes(i.symbol)}
+                      // Read-only while a board exists: the board decides what
+                      // trades, and letting this diverge would show a tick
+                      // that Start Bot then ignores.
+                      disabled={boardActive}
+                      title={
+                        boardActive
+                          ? "Set by the multi-strategy board below"
+                          : undefined
+                      }
                       onChange={() => toggleSymbol(i.symbol)}
                     />
                     {i.symbol}
+                    {boardActive && symbols.includes(i.symbol) && (
+                      <span className="rounded bg-sky-950 px-1 text-[10px] text-sky-300">
+                        {groups
+                          .filter((g) => g.symbols.includes(i.symbol))
+                          .length > 1
+                          ? `${groups.filter((g) => g.symbols.includes(i.symbol)).length} strategies`
+                          : "on board"}
+                      </span>
+                    )}
                     {custom && (
                       <span
                         title={describeSymbolConfig(custom)}
@@ -709,6 +809,28 @@ export default function Sidebar({ status, onChanged }: Props) {
           ⚙️ sets a stock's own trading days, time window and risk:reward for{" "}
           {mode}. Stocks without it trade exactly as the strategy says.
         </p>
+
+        <div className="mt-4 border-t border-slate-800 pt-3">
+          <div className="mb-1 font-medium text-slate-300">
+            🧩 Multi-strategy board ({mode})
+          </div>
+          <StrategyBoard
+            mode={mode}
+            instruments={instruments}
+            strategies={strategies}
+            groups={groups}
+            onSaved={setGroups}
+            disabled={running}
+          />
+          {groups.length > 0 && (
+            <p className="mt-2 text-[11px] text-amber-400">
+              With a board set up, Start Bot runs these strategies instead of
+              the single Strategy/Instruments picked above. They share your
+              capital and never open the same stock twice.
+              {running && " Stop the bot to edit the board."}
+            </p>
+          )}
+        </div>
         {segments.includes("MCX_COMMODITY") && (
           <p className="mt-1 text-[11px] text-slate-500">
             Commodities trade a FIXED number of lots — set it per symbol above
@@ -770,13 +892,12 @@ export default function Sidebar({ status, onChanged }: Props) {
 
       <section>
         <div className="mb-1 font-medium text-slate-300">Total Capital (₹)</div>
-        <input
-          type="number"
+        <NumberInput
           className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-slate-100"
           value={capital}
           min={10000}
           step={10000}
-          onChange={(e) => setCapital(Number(e.target.value))}
+          onChange={setCapital}
         />
       </section>
 
@@ -864,6 +985,53 @@ export default function Sidebar({ status, onChanged }: Props) {
             : `${mode} is admin-only; clients can only be given ${CLIENT_SELECTABLE_MODES.join(" or ")}.`}
         </p>
         {configMsg && <p className="mt-1 text-xs text-emerald-400">{configMsg}</p>}
+
+        <div className="mt-3 border-t border-slate-800 pt-2">
+          <label className="flex items-start gap-2 text-slate-300">
+            <input
+              type="checkbox"
+              className="mt-1"
+              checked={botConfig?.auto_start_clients ?? false}
+              disabled={busy}
+              onChange={toggleAutoStart}
+            />
+            <span className="text-xs">
+              Also start all client bots when I start
+              <span className="block text-[11px] text-slate-500">
+                Starting your bot publishes that exact run — strategy,
+                instruments, RR, per-stock settings — as what clients follow,
+                then starts every eligible client on it. No separate “save for
+                clients” step. Only applies to{" "}
+                {CLIENT_SELECTABLE_MODES.join(" / ")}; a {mode === "Swing" ? "Swing" : "non-client"}{" "}
+                run publishes nothing and starts nobody.
+              </span>
+            </span>
+          </label>
+          {(botConfig?.auto_start_clients ?? false) && environment === "Live" && (
+            <p className="mt-1 text-[11px] text-amber-400">
+              ⚠️ In Live this places real orders on client accounts as soon as
+              you press Start.
+            </p>
+          )}
+        </div>
+
+        {clientStart && (
+          <div className="mt-3 rounded border border-slate-800 bg-slate-950/60 p-2">
+            <div className="text-xs text-slate-300">
+              Started {clientStart.started.length} of {clientStart.total} client
+              {clientStart.total === 1 ? "" : "s"}.
+            </div>
+            {clientStart.skipped.length > 0 && (
+              <ul className="mt-1 space-y-0.5">
+                {clientStart.skipped.map((s) => (
+                  <li key={s.username} className="text-[11px] text-amber-400">
+                    {s.username}: {s.reason}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
 
         <div className="mt-3 border-t border-slate-800 pt-2">
           <div className="mb-1 text-xs font-medium text-slate-400">
@@ -965,12 +1133,14 @@ function RiskField({
   return (
     <div className="mb-2">
       <label className="mb-0.5 block text-xs text-slate-400">{label}</label>
-      <input
-        type="number"
+      {/* NumberInput, not a raw <input>: every one of these limits uses 0 to
+          mean "no limit", so clearing the box has to be possible. */}
+      <NumberInput
         step={step}
         className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1 text-sm text-slate-100"
         value={value}
-        onChange={(e) => onChange(Number(e.target.value))}
+        onChange={onChange}
+        ariaLabel={label}
       />
     </div>
   )

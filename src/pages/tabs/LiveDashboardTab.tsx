@@ -54,6 +54,49 @@ export default function LiveDashboardTab({
 
       <RunConfigPanel cfg={status.run_config} />
 
+      {(status.groups?.length ?? 0) > 0 && (
+        <div>
+          <h3 className="mb-2 text-sm font-semibold text-slate-200">
+            🧩 Strategies running
+          </h3>
+          <DataTable
+            rows={status.groups ?? []}
+            rowKey={(r) => r.strategy_key}
+            empty=""
+            columns={[
+              {
+                key: "name",
+                header: "Strategy",
+                render: (r) => (showStrategy ? r.strategy_name : r.strategy_key),
+              },
+              {
+                key: "state",
+                header: "State",
+                render: (r) => (r.running ? "🟢 Running" : "🔴 Stopped"),
+              },
+              { key: "rr", header: "RR", render: (r) => `1:${r.risk_reward}` },
+              { key: "n", header: "Stocks", render: (r) => r.symbols.length },
+              {
+                key: "open",
+                header: "Open now",
+                render: (r) => (r.open.length ? r.open.join(", ") : "—"),
+              },
+              {
+                key: "pnl",
+                header: "Today (₹)",
+                render: (r) =>
+                  r.day_pnl.toLocaleString("en-IN", { maximumFractionDigits: 2 }),
+              },
+            ]}
+          />
+          <p className="mt-2 text-xs text-slate-500">
+            Each strategy runs its own engine against one shared wallet. A stock
+            can sit on several strategies, but only one trade in it is open at a
+            time — the others wait for it to close.
+          </p>
+        </div>
+      )}
+
       <div
         className={`grid grid-cols-2 gap-3 ${
           showStrategy ? "sm:grid-cols-4" : "sm:grid-cols-3"
