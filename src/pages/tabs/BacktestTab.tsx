@@ -7,11 +7,16 @@ import type {
   BacktestResult,
   BulkBacktestResult,
   Instrument,
+  PatternRules,
+  PatternStat,
   RRSweepResult,
   StrategyInfo,
 } from "../../lib/types"
 
 const MODES = ["Intraday", "Swing", "Scalper"] as const
+// Mirrors pattern_config.FILTERABLE_STRATEGIES — the picker only makes sense
+// for strategies whose signal goes through candlestick pattern detection.
+const PATTERN_STRATEGIES: string[] = ["candlestick_engine", "candlestick_engine_v2"]
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 // NSE equity runs 09:15–15:30 and MCX to 23:30, so the picker spans 9–23. A
 // stock backtest simply has no trades in the later hours.
@@ -54,6 +59,14 @@ export default function BacktestTab() {
   const [tradeDays, setTradeDays] = useState<number[]>([])
   const [tradeHours, setTradeHours] = useState<number[]>([])
   const [side, setSide] = useState<"BOTH" | "BUY" | "SELL">("BOTH")
+  // PER-RUN pattern override. Empty = fall back to the saved dashboard filter,
+  // so an untouched form measures what the live bot actually trades.
+  const [patterns, setPatterns] = useState<string[]>([])
+  const [catalogue, setCatalogue] = useState<string[]>([])
+  const [patternStats, setPatternStats] = useState<PatternStat[]>([])
+  const [savedPatterns, setSavedPatterns] = useState<PatternRules | null>(null)
+  const [showPatterns, setShowPatterns] = useState(false)
+  const [patternQuery, setPatternQuery] = useState("")
   // Bulk: run the bucket and rank it, instead of one symbol.
   const [bulkMode, setBulkMode] = useState(false)
   const [bulkTickers, setBulkTickers] = useState<string[]>([])
@@ -85,6 +98,54 @@ export default function BacktestTab() {
   const toggle = <T,>(list: T[], v: T) =>
     list.includes(v) ? list.filter((x) => x !== v) : [...list, v]
 
+  // Catalogue is static; stats and the saved filter follow mode/strategy so
+  // the picker always describes the run about to happen.
+  useEffect(() => {
+    api
+      .get<{ patterns: string[] }>("/admin/pattern-catalogue")
+      .then((r) => setCatalogue(r.patterns))
+      .catch(() => setCatalogue([]))
+  }, [])
+
+  useEffect(() => {
+    if (!PATTERN_STRATEGIES.includes(strategyKey)) {
+      setSavedPatterns(null)
+      setPatternStats([])
+      return
+    }
+    api
+      .get<Record<string, PatternRules>>(`/admin/pattern-config?mode=${mode}`)
+      .then((all) => setSavedPatterns(all[strategyKey] ?? null))
+      .catch(() => setSavedPatterns(null))
+    api
+      .get<{ patterns: PatternStat[] }>(
+        `/admin/pattern-stats?environment=Paper&strategy=${strategyKey}&mode=${mode}`,
+      )
+      .then((r) => setPatternStats(r.patterns))
+      .catch(() => setPatternStats([]))
+  }, [mode, strategyKey])
+
+  const patternUniverse = (() => {
+    const all = new Set<string>(catalogue)
+    for (const s of patternStats) all.add(s.pattern)
+    for (const p of patterns) all.add(p)
+    const stat = new Map(patternStats.map((s) => [s.pattern, s]))
+    return [...all].sort((a, b) => {
+      const sa = stat.get(a)
+      const sb = stat.get(b)
+      if (sa && sb) return sb.pnl - sa.pnl
+      if (sa) return -1
+      if (sb) return 1
+      return a.localeCompare(b)
+    })
+  })()
+  const patternStatOf = new Map(patternStats.map((s) => [s.pattern, s]))
+  const shownPatterns = patternQuery.trim()
+    ? patternUniverse.filter((p) =>
+        p.toLowerCase().includes(patternQuery.trim().toLowerCase()),
+      )
+    : patternUniverse
+
   const run = async () => {
     setBusy(true)
     setError(null)
@@ -94,6 +155,8 @@ export default function BacktestTab() {
       trade_days: tradeDays,
       trade_hours: tradeHours,
       side,
+      // Empty list = the server falls back to the saved dashboard filter.
+      patterns: PATTERN_STRATEGIES.includes(strategyKey) ? patterns : [],
     }
     try {
       if (bulkMode) {
@@ -392,6 +455,120 @@ export default function BacktestTab() {
             Bulk run — rank many symbols
           </label>
         </div>
+
+        {PATTERN_STRATEGIES.includes(strategyKey) && (
+          <div className="mt-2 border-t border-slate-800 pt-2">
+            <button
+              type="button"
+              onClick={() => setShowPatterns((v) => !v)}
+              className="flex w-full items-center justify-between text-left text-[11px] font-medium text-slate-300"
+            >
+              <span>
+                🕯️ Patterns to test{" "}
+                {patterns.length > 0 ? (
+                  <span className="text-sky-400">({patterns.length} selected)</span>
+                ) : (
+                  <span className="text-slate-500">
+                    (
+                    {savedPatterns?.enabled && savedPatterns.allowed.length
+                      ? `using the saved filter — ${savedPatterns.allowed.length}`
+                      : "all patterns"}
+                    )
+                  </span>
+                )}
+              </span>
+              <span className="text-slate-500">{showPatterns ? "▾" : "▸"}</span>
+            </button>
+
+            {showPatterns && (
+              <div className="mt-2 space-y-2">
+                <p className="text-[11px] text-slate-500">
+                  Tick patterns to test a set for THIS RUN ONLY — nothing is
+                  saved and the live bot is not touched. Leave everything
+                  unticked to measure whatever the dashboard filter is currently
+                  set to, which is what the bot actually trades. ₹ figures are
+                  from your Paper book.
+                </p>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    value={patternQuery}
+                    onChange={(e) => setPatternQuery(e.target.value)}
+                    placeholder="Search patterns…"
+                    className="flex-1 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+                  />
+                  {savedPatterns?.allowed.length ? (
+                    <button
+                      type="button"
+                      onClick={() => setPatterns(savedPatterns.allowed)}
+                      className="rounded bg-slate-800 px-2 py-1 text-[11px] text-slate-300 hover:bg-slate-700"
+                    >
+                      copy saved
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setPatterns(
+                        patternStats
+                          .filter((s) => s.pnl > 0 && s.trades >= 5)
+                          .map((s) => s.pattern),
+                      )
+                    }
+                    disabled={patternStats.length === 0}
+                    className="rounded bg-slate-800 px-2 py-1 text-[11px] text-slate-300 hover:bg-slate-700 disabled:opacity-40"
+                  >
+                    + profitable
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPatterns([])}
+                    disabled={patterns.length === 0}
+                    className="rounded bg-slate-800 px-2 py-1 text-[11px] text-slate-300 hover:bg-slate-700 disabled:opacity-40"
+                  >
+                    clear
+                  </button>
+                </div>
+
+                <div className="max-h-52 overflow-y-auto rounded border border-slate-800">
+                  {shownPatterns.map((p) => {
+                    const s = patternStatOf.get(p)
+                    const on = patterns.includes(p)
+                    return (
+                      <label
+                        key={p}
+                        className={`flex items-center gap-2 border-b border-slate-900 px-2 py-1 last:border-0 ${
+                          on ? "bg-sky-950/40" : ""
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={on}
+                          onChange={() => setPatterns((prev) => toggle(prev, p))}
+                        />
+                        <span className="flex-1 text-[11px] text-slate-200">{p}</span>
+                        {s && (
+                          <span className="shrink-0 text-[10px]">
+                            <span
+                              className={
+                                s.pnl >= 0 ? "text-emerald-400" : "text-red-400"
+                              }
+                            >
+                              ₹{s.pnl.toLocaleString("en-IN")}
+                            </span>
+                            <span className="ml-1 text-slate-500">
+                              {s.trades}t · {s.win_rate}%
+                            </span>
+                          </span>
+                        )}
+                      </label>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {bulkMode && (
           <div className="mt-2 border-t border-slate-800 pt-2">

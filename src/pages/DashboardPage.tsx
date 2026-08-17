@@ -11,6 +11,7 @@ import LiveDashboardTab from "./tabs/LiveDashboardTab"
 import HoldingsTab from "./tabs/HoldingsTab"
 import ActivityTab from "./tabs/ActivityTab"
 import TradeLogTab from "./tabs/TradeLogTab"
+import AdvancedBacktestTab from "./tabs/AdvancedBacktestTab"
 import AuditorTab from "./tabs/AuditorTab"
 import BacktestTab from "./tabs/BacktestTab"
 import TradeChartsTab from "./tabs/TradeChartsTab"
@@ -22,6 +23,7 @@ const TABS = [
   { key: "activity", label: "📝 Activity Log" },
   { key: "trades", label: "📒 Trade Log & Analytics" },
   { key: "backtest", label: "🧪 Backtesting Engine" },
+  { key: "advanced", label: "🔬 Advanced Backtest" },
   { key: "charts", label: "📈 Trade Charts" },
   { key: "auditor", label: "🧠 AI Auditor" },
   { key: "clients", label: "👥 Clients" },
@@ -94,6 +96,7 @@ export default function DashboardPage() {
           {tab === "activity" && <ActivityTab status={status} />}
           {tab === "trades" && <TradeLogTab />}
           {tab === "backtest" && <BacktestTab />}
+          {tab === "advanced" && <AdvancedBacktestTab />}
           {tab === "charts" && <TradeChartsTab />}
           {tab === "auditor" && <AuditorTab />}
           {tab === "clients" && <ClientsTab />}

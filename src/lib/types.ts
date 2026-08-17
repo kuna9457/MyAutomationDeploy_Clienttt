@@ -158,6 +158,92 @@ export interface RunConfig {
 /** One strategy and the stocks assigned to it (GET/PUT /admin/strategy-groups).
  *  A symbol may appear in several groups; only one trade in it opens at a
  *  time, enforced at execution by capital_ledger. */
+/* -- Advanced backtest: symbol x pattern combination search ---------------- */
+
+/** One (symbol, pattern) candidate. `screen_*` is the cheap attributed pass;
+ *  `is_*` / `oos_*` come from real filtered runs on the two halves of the
+ *  window, and are the numbers to judge on. */
+export interface SearchCombo {
+  symbol: string
+  pattern: string
+  screen_trades: number
+  screen_pnl: number
+  screen_win_rate: number
+  verified: boolean
+  is_return: number | null
+  oos_return: number | null
+  oos_trades: number
+  oos_win_rate: number
+  oos_profit_factor: number | null
+  oos_max_dd: number | null
+  /** holds | promising | overfit | thin | fails | unverified */
+  verdict: string
+  note: string
+  score: number
+}
+
+export interface SearchSymbolSummary {
+  symbol: string
+  trades: number
+  return_pct: number
+  win_rate: number
+  source: string
+  error?: string
+}
+
+export interface SearchBucket {
+  symbols: string[]
+  patterns: string[]
+  combinations: SearchCombo[]
+  why: string
+}
+
+export interface SearchResults {
+  cancelled: boolean
+  combos: SearchCombo[]
+  symbols: SearchSymbolSummary[]
+  split_date: string
+  screened: number
+  verified: number
+  bucket?: SearchBucket
+}
+
+export interface SearchJob {
+  id: string
+  status: "running" | "done" | "cancelled" | "error"
+  created_at: string
+  done: number
+  total: number
+  label: string
+  elapsed: number
+  error: string
+  spec?: Record<string, unknown>
+  results?: SearchResults | null
+}
+
+/* -- Candlestick pattern allow-list --------------------------------------- */
+
+/** Which patterns may open a trade, for one strategy + mode.
+ *  `enabled=false` OR an empty `allowed` means no filtering at all. */
+export interface PatternRules {
+  enabled: boolean
+  allowed: string[]
+}
+
+/** Realised PnL attributed to one pattern. `solo_*` counts only trades where
+ *  this pattern fired ALONE — the clean read, since entry_reason usually holds
+ *  a combination and every pattern in it gets credited. */
+export interface PatternStat {
+  pattern: string
+  trades: number
+  pnl: number
+  win_rate: number
+  avg_pnl: number
+  solo_trades: number
+  solo_pnl: number
+  solo_win_rate: number
+}
+
 /* -- Trade charts (replay a trade on the candles it was taken on) ---------- */
 
 /** One symbol the bot traded in the chosen window. */

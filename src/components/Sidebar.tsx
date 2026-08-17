@@ -3,6 +3,7 @@ import { api, ApiError } from "../lib/api"
 import { CLIENT_SELECTABLE_MODES, MODE_LABELS as CLIENT_MODE_LABELS } from "../lib/modes"
 import BrokerLoginPanel from "./BrokerLoginPanel"
 import NumberInput from "./NumberInput"
+import PatternFilterPanel from "./PatternFilterPanel"
 import StrategyBoard from "./StrategyBoard"
 import SymbolSettingsModal from "./SymbolSettingsModal"
 import { EMPTY_SYMBOL_CONFIG, type SymbolConfig } from "../lib/types"
@@ -19,6 +20,11 @@ import type {
 } from "../lib/types"
 
 const MODES = ["Intraday", "Swing", "Scalper"] as const
+// Strategies whose signal goes through candlestick pattern detection, and so
+// can be pattern-filtered. Mirrors pattern_config.FILTERABLE_STRATEGIES; the
+// server rejects anything else, so a drift here costs a hidden panel, never a
+// silently-ignored setting.
+const PATTERN_STRATEGIES: string[] = ["candlestick_engine", "candlestick_engine_v2"]
 const BROKERS = ["Upstox", "Dhan", "Zerodha", "Kotak Neo"]
 const SEGMENT_LABELS: Record<string, string> = {
   NSE_EQUITY: "NSE Equity",
@@ -71,6 +77,9 @@ export default function Sidebar({ status, onChanged }: Props) {
   // The strategy board for the CURRENT mode. Empty = no board, and Start Bot
   // takes the original single-strategy path.
   const [groups, setGroups] = useState<StrategyGroup[]>([])
+  // Collapsed by default: the pattern list is long, and most sessions do not
+  // touch it.
+  const [showPatterns, setShowPatterns] = useState(false)
   const [settingsFor, setSettingsFor] = useState<string | null>(null)
   // Saved Controls presets: the whole panel under a name.
   const [presets, setPresets] = useState<Record<string, ControlPreset>>({})
@@ -569,6 +578,27 @@ export default function Sidebar({ status, onChanged }: Props) {
           <p className="mt-1 text-xs text-slate-500">
             {strategies.find((s) => s.key === strategyKey)!.summary}
           </p>
+        )}
+
+        {PATTERN_STRATEGIES.includes(strategyKey) && (
+          <div className="mt-3 border-t border-slate-800 pt-2">
+            <button
+              onClick={() => setShowPatterns((v) => !v)}
+              className="mb-1 flex w-full items-center justify-between text-left font-medium text-slate-300"
+            >
+              <span>🕯️ Pattern filter ({mode})</span>
+              <span className="text-xs text-slate-500">
+                {showPatterns ? "▾" : "▸"}
+              </span>
+            </button>
+            {showPatterns && (
+              <PatternFilterPanel
+                mode={mode}
+                strategyKey={strategyKey}
+                disabled={running}
+              />
+            )}
+          </div>
         )}
       </section>
 
