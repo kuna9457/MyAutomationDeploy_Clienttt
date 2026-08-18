@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react"
 import { api, ApiError } from "../lib/api"
-import type { PatternRules, PatternStat } from "../lib/types"
+import type { FilterSpec, PatternRules, PatternStat } from "../lib/types"
 
 /** Choose which candlestick patterns may open a trade.
  *
@@ -21,7 +21,10 @@ export default function PatternFilterPanel({
   strategyKey: string
   disabled?: boolean
 }) {
-  const [catalogue, setCatalogue] = useState<string[]>([])
+  // Per strategy: candlestick, chart patterns and context factors have
+  // different vocabularies AND different semantics, so one shared catalogue
+  // would mislabel two of the three.
+  const [specs, setSpecs] = useState<Record<string, FilterSpec>>({})
   const [filterable, setFilterable] = useState<string[]>([])
   const [rules, setRules] = useState<PatternRules>({ enabled: false, allowed: [] })
   const [stats, setStats] = useState<PatternStat[]>([])
@@ -34,10 +37,13 @@ export default function PatternFilterPanel({
 
   useEffect(() => {
     api
-      .get<{ patterns: string[]; strategies: string[] }>("/admin/pattern-catalogue")
+      .get<{
+        strategies: string[]
+        by_strategy: Record<string, FilterSpec>
+      }>("/admin/pattern-catalogue")
       .then((r) => {
-        setCatalogue(r.patterns)
-        setFilterable(r.strategies)
+        setSpecs(r.by_strategy ?? {})
+        setFilterable(r.strategies ?? [])
       })
       .catch(() => {})
   }, [])
@@ -67,6 +73,10 @@ export default function PatternFilterPanel({
   // Catalogue plus anything seen in the trade log or already allowed — a
   // pattern from another engine (chart patterns, market structure) can appear
   // in entry_reason, and a name you added by hand must not vanish from view.
+  const spec = specs[strategyKey]
+  const catalogue = spec?.catalogue ?? []
+  const isRequire = spec?.kind === "require"
+
   const universe = useMemo(() => {
     const all = new Set<string>(catalogue)
     for (const s of stats) all.add(s.pattern)
@@ -138,8 +148,8 @@ export default function PatternFilterPanel({
   if (!filterable.includes(strategyKey)) {
     return (
       <p className="text-[11px] text-slate-500">
-        {strategyKey || "This strategy"} does not use candlestick patterns, so a
-        pattern filter would do nothing here.
+        {strategyKey || "This strategy"} names no patterns or context factors,
+        so a filter here would do nothing.
       </p>
     )
   }
@@ -158,18 +168,19 @@ export default function PatternFilterPanel({
           onChange={(e) => save({ ...rules, enabled: e.target.checked })}
         />
         <span className="text-xs">
-          Only trade the ticked patterns
+          {isRequire
+            ? "Require one of the ticked factors"
+            : "Only trade the ticked " + (spec?.label ?? "patterns").toLowerCase()}
           <span className="block text-[11px] text-slate-500">
-            Off by default. With this on, a signal only fires if an allowed
-            pattern is part of the evidence — everything else is ignored. It can
-            only make the bot trade LESS, never differently sized.
+            Off by default. {spec?.help} It can only make the bot trade LESS,
+            never differently sized.
           </span>
         </span>
       </label>
 
       {rules.enabled && rules.allowed.length === 0 && (
         <p className="rounded border border-amber-800 bg-amber-950/40 p-2 text-[11px] text-amber-300">
-          Nothing ticked yet, so filtering is still OFF and every pattern counts.
+          Nothing ticked yet, so filtering is still OFF and everything counts.
           Tick at least one to make this bind.
         </p>
       )}
@@ -271,8 +282,11 @@ export default function PatternFilterPanel({
 
       {active && (
         <p className="text-[11px] text-emerald-400">
-          ✅ Active: {rules.allowed.length} pattern(s) may open a trade on{" "}
-          {strategyKey} / {mode}.
+          ✅ Active on {strategyKey} / {mode}:{" "}
+          {isRequire
+            ? `a signal must include one of ${rules.allowed.length} factor(s)`
+            : `${rules.allowed.length} pattern(s) may open a trade`}
+          .
         </p>
       )}
       {msg && <p className="text-[11px] text-slate-400">{msg}</p>}

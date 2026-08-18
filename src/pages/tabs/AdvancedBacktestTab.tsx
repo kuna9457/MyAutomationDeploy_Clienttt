@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import DataTable from "../../components/DataTable"
+import SymbolBucketBar from "../../components/SymbolBucketBar"
 import { api, ApiError } from "../../lib/api"
 import type {
   Instrument,
@@ -58,10 +59,17 @@ export default function AdvancedBacktestTab() {
   const [error, setError] = useState<string | null>(null)
   const [onlyKeepers, setOnlyKeepers] = useState(false)
   const [copied, setCopied] = useState(false)
+  // Read from the server rather than hardcoded, so the form can never
+  // advertise a different ceiling from the one that is enforced.
+  const [maxSymbols, setMaxSymbols] = useState(150)
   const poll = useRef<number | null>(null)
 
   useEffect(() => {
     api.get<Instrument[]>("/config/instruments").then(setInstruments).catch(() => {})
+    api
+      .get<{ max_symbols: number }>("/advanced-backtest/limits")
+      .then((l) => setMaxSymbols(l.max_symbols))
+      .catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -143,10 +151,21 @@ export default function AdvancedBacktestTab() {
     : "pick some symbols"
 
   const copyBucket = () => {
-    if (!results?.bucket) return
+    const b = results?.bucket
+    if (!b) return
+    // Pairings, not two flat lists: pasting {symbols} x {patterns} would
+    // switch on every unvalidated cell between them.
+    const lines = b.pairs
+      .map(
+        (p) =>
+          `${p.symbol} + ${p.pattern} (OOS ${p.oos_return}% vs unfiltered ${p.baseline_oos_return}%, edge ${p.edge})`,
+      )
+      .join("\n")
+    const safe = b.safe_plan
+      ? `\n\nSafe to run as-is (one pattern, no cross-product):\n  Pattern: ${b.safe_plan.pattern}\n  Symbols: ${b.safe_plan.symbols.join(", ")}`
+      : ""
     void navigator.clipboard?.writeText(
-      `Symbols: ${results.bucket.symbols.join(", ")}\n` +
-        `Patterns: ${results.bucket.patterns.join(", ")}`,
+      `Validated pairings:\n` + lines + safe,
     )
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
@@ -252,9 +271,17 @@ export default function AdvancedBacktestTab() {
         <div className="mt-3">
           <div className="mb-1 flex items-center justify-between">
             <span className="text-xs text-slate-400">
-              Symbols ({symbols.length} selected, max 40) — equity only
+              Symbols ({symbols.length} selected, max {maxSymbols}) — equity only
             </span>
             <span className="flex gap-2">
+              <button
+                onClick={() =>
+                  setSymbols(shown.slice(0, maxSymbols).map((i) => i.symbol))
+                }
+                className="text-[11px] text-sky-400 hover:underline"
+              >
+                select all shown
+              </button>
               <button
                 onClick={() => setSymbols(shown.slice(0, 20).map((i) => i.symbol))}
                 className="text-[11px] text-sky-400 hover:underline"
@@ -269,11 +296,17 @@ export default function AdvancedBacktestTab() {
               </button>
             </span>
           </div>
+          <SymbolBucketBar
+            selected={symbols}
+            onLoad={setSymbols}
+            known={new Set(equity.map((i) => i.symbol))}
+            disabled={job?.status === "running"}
+          />
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search symbols…"
-            className="mb-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
+            className="mb-1 mt-2 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
           />
           <div className="flex max-h-28 flex-wrap gap-1 overflow-y-auto">
             {shown.slice(0, 120).map((i) => (
@@ -301,7 +334,11 @@ export default function AdvancedBacktestTab() {
         <div className="mt-3 flex flex-wrap items-center gap-3">
           <button
             onClick={startSearch}
-            disabled={job?.status === "running" || symbols.length === 0}
+            disabled={
+              job?.status === "running" ||
+              symbols.length === 0 ||
+              symbols.length > maxSymbols
+            }
             className="rounded-lg bg-indigo-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-600 disabled:opacity-50"
           >
             {job?.status === "running" ? "Searching…" : "🔬 Run search"}
@@ -315,6 +352,18 @@ export default function AdvancedBacktestTab() {
             </button>
           )}
           <span className="text-[11px] text-slate-500">{estimate}</span>
+          {symbols.length > maxSymbols && (
+            <span className="text-[11px] text-red-400">
+              {symbols.length} selected — the limit is {maxSymbols}. Deselect{" "}
+              {symbols.length - maxSymbols} or raise ADV_BACKTEST_MAX_SYMBOLS.
+            </span>
+          )}
+          {symbols.length > 40 && symbols.length <= maxSymbols && (
+            <span className="text-[11px] text-amber-400">
+              Large search. Symbols not cached yet are downloaded once — the
+              first run on a fresh set is the slow one.
+            </span>
+          )}
         </div>
 
         {error && <p className="mt-2 text-xs text-red-400">{error}</p>}
@@ -345,31 +394,100 @@ export default function AdvancedBacktestTab() {
         </div>
       )}
 
-      {results?.bucket && results.bucket.combinations.length > 0 && (
+      {results?.bucket && results.bucket.pairs.length > 0 && (
         <div className="rounded-lg border border-emerald-800 bg-emerald-950/30 p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h3 className="text-sm font-semibold text-emerald-300">
-              🪣 Recommended bucket
+              Recommended pairings
             </h3>
             <button
               onClick={copyBucket}
               className="rounded bg-slate-800 px-2 py-1 text-[11px] text-slate-200 hover:bg-slate-700"
             >
-              {copied ? "copied ✓" : "copy symbols + patterns"}
+              {copied ? "copied" : "copy pairings"}
             </button>
           </div>
           <p className="mt-1 text-[11px] text-slate-400">{results.bucket.why}</p>
-          <p className="mt-2 text-xs text-slate-200">
-            <span className="text-slate-500">Symbols: </span>
-            {results.bucket.symbols.join(", ")}
-          </p>
-          <p className="text-xs text-slate-200">
-            <span className="text-slate-500">Patterns: </span>
-            {results.bucket.patterns.join(", ")}
-          </p>
+
+          <ul className="mt-2 space-y-0.5">
+            {results.bucket.pairs.map((p) => (
+              <li key={p.symbol + "|" + p.pattern} className="text-xs text-slate-200">
+                <span className="font-semibold">{p.symbol}</span>
+                <span className="text-slate-500"> + </span>
+                {p.pattern}
+                <span className="ml-2 text-slate-500">
+                  OOS {p.oos_return}% vs unfiltered {p.baseline_oos_return}%
+                </span>
+                <span className="ml-1 text-emerald-400">edge +{p.edge}</span>
+              </li>
+            ))}
+          </ul>
+
+          {results.bucket.safe_plan && (
+            <div className="mt-3 rounded border border-sky-900 bg-sky-950/40 p-2">
+              <p className="text-[11px] font-semibold text-sky-300">
+                Safe to apply as-is
+              </p>
+              <p className="mt-0.5 text-xs text-slate-200">
+                Pattern <strong>{results.bucket.safe_plan.pattern}</strong> with{" "}
+                {results.bucket.safe_plan.symbols.join(", ")}
+              </p>
+              <p className="mt-0.5 text-[11px] text-slate-400">
+                One pattern plus its own symbols is the only shape today&apos;s
+                settings express exactly &mdash; the pattern filter is per
+                strategy, so a single pattern cannot create an unvalidated
+                pairing.
+              </p>
+            </div>
+          )}
+
+          {results.bucket.conflicts.length > 0 && (
+            <div className="mt-3 rounded border border-red-900 bg-red-950/40 p-2">
+              <p className="text-[11px] font-semibold text-red-300">
+                Do NOT paste the symbol and pattern lists separately
+              </p>
+              <p className="mt-0.5 text-[11px] text-slate-300">
+                That enables every combination between them, including these
+                this search already rejected:
+              </p>
+              <ul className="mt-1 space-y-0.5">
+                {results.bucket.conflicts.map((c) => (
+                  <li
+                    key={c.symbol + "|" + c.pattern}
+                    className="text-[11px] text-red-300"
+                  >
+                    {c.symbol} + {c.pattern} &mdash; {c.verdict}
+                    {c.oos_return !== null && " (" + c.oos_return + "% OOS)"}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {results.bucket.dropped_no_edge.length > 0 && (
+            <details className="mt-3">
+              <summary className="cursor-pointer text-[11px] text-slate-400">
+                {results.bucket.dropped_no_edge.length} profitable combination(s)
+                left out &mdash; the unfiltered symbol did better
+              </summary>
+              <ul className="mt-1 space-y-0.5">
+                {results.bucket.dropped_no_edge.map((d) => (
+                  <li
+                    key={d.symbol + "|" + d.pattern}
+                    className="text-[11px] text-slate-400"
+                  >
+                    {d.symbol} + {d.pattern}: {d.oos_return}% OOS, but unfiltered
+                    beat it by {Math.abs(d.edge ?? 0)} points &mdash; leave this
+                    one alone.
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+
           <p className="mt-2 text-[11px] text-slate-500">
-            Nothing has been applied. Paste these into the strategy board and the
-            pattern filter yourself, once you are satisfied.
+            Nothing has been applied. These are pairings, not two independent
+            lists &mdash; apply them as pairs.
           </p>
         </div>
       )}
@@ -427,6 +545,32 @@ export default function AdvancedBacktestTab() {
                 ),
               },
               {
+                key: "base",
+                header: "Unfiltered OOS %",
+                render: (r) =>
+                  r.baseline_oos_return === null ? "—" : r.baseline_oos_return,
+              },
+              {
+                key: "edge",
+                header: "Edge",
+                render: (r) =>
+                  r.edge === null ? (
+                    "—"
+                  ) : (
+                    <span
+                      className={r.edge > 0 ? "text-emerald-400" : "text-red-400"}
+                      title={
+                        r.edge > 0
+                          ? "The filter beat trading this symbol unfiltered."
+                          : "Trading this symbol UNFILTERED did better — the filter costs you here."
+                      }
+                    >
+                      {r.edge > 0 ? "+" : ""}
+                      {r.edge}
+                    </span>
+                  ),
+              },
+              {
                 key: "pf",
                 header: "PF",
                 render: (r) => r.oos_profit_factor ?? "—",
@@ -455,8 +599,15 @@ export default function AdvancedBacktestTab() {
           </p>
 
           <h4 className="mb-1 mt-4 text-xs font-semibold text-slate-300">
-            Per-symbol baseline (unfiltered — what each combination must beat)
+            Per-symbol baseline (unfiltered)
           </h4>
+          <p className="mb-1 text-[11px] text-slate-500">
+            The <strong>Out-of-sample</strong> column is the like-for-like
+            comparison — the same symbol with no pattern filter, over the same
+            window a combination is scored on. The full-window column spans both
+            halves and is only context; comparing it against a combination's OOS
+            return would compare two different lengths of time.
+          </p>
           <DataTable
             rows={results.symbols}
             rowKey={(r) => r.symbol}
@@ -466,7 +617,7 @@ export default function AdvancedBacktestTab() {
               { key: "t", header: "Trades", render: (r) => r.trades },
               {
                 key: "r",
-                header: "Return %",
+                header: "Full-window %",
                 render: (r) => (
                   <span
                     className={r.return_pct >= 0 ? "text-emerald-400" : "text-red-400"}
@@ -474,6 +625,24 @@ export default function AdvancedBacktestTab() {
                     {r.return_pct}
                   </span>
                 ),
+              },
+              {
+                key: "boos",
+                header: "Out-of-sample %",
+                render: (r) =>
+                  r.baseline_oos_return === null ? (
+                    "—"
+                  ) : (
+                    <span
+                      className={
+                        r.baseline_oos_return >= 0
+                          ? "text-emerald-400"
+                          : "text-red-400"
+                      }
+                    >
+                      {r.baseline_oos_return}
+                    </span>
+                  ),
               },
               { key: "w", header: "Win %", render: (r) => r.win_rate },
               { key: "src", header: "Data", render: (r) => r.error || r.source },

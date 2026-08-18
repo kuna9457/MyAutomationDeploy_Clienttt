@@ -6,6 +6,7 @@ import { api, ApiError } from "../../lib/api"
 import type {
   BacktestResult,
   BulkBacktestResult,
+  FilterSpec,
   Instrument,
   PatternRules,
   PatternStat,
@@ -16,7 +17,12 @@ import type {
 const MODES = ["Intraday", "Swing", "Scalper"] as const
 // Mirrors pattern_config.FILTERABLE_STRATEGIES — the picker only makes sense
 // for strategies whose signal goes through candlestick pattern detection.
-const PATTERN_STRATEGIES: string[] = ["candlestick_engine", "candlestick_engine_v2"]
+const PATTERN_STRATEGIES: string[] = [
+  "candlestick_engine",
+  "candlestick_engine_v2",
+  "chart_pattern_engine",
+  "context_engine",
+]
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 // NSE equity runs 09:15–15:30 and MCX to 23:30, so the picker spans 9–23. A
 // stock backtest simply has no trades in the later hours.
@@ -62,7 +68,9 @@ export default function BacktestTab() {
   // PER-RUN pattern override. Empty = fall back to the saved dashboard filter,
   // so an untouched form measures what the live bot actually trades.
   const [patterns, setPatterns] = useState<string[]>([])
-  const [catalogue, setCatalogue] = useState<string[]>([])
+  // Per strategy: chart patterns and context factors have their own
+  // vocabularies, so one shared list would offer the wrong names.
+  const [specs, setSpecs] = useState<Record<string, FilterSpec>>({})
   const [patternStats, setPatternStats] = useState<PatternStat[]>([])
   const [savedPatterns, setSavedPatterns] = useState<PatternRules | null>(null)
   const [showPatterns, setShowPatterns] = useState(false)
@@ -102,9 +110,9 @@ export default function BacktestTab() {
   // the picker always describes the run about to happen.
   useEffect(() => {
     api
-      .get<{ patterns: string[] }>("/admin/pattern-catalogue")
-      .then((r) => setCatalogue(r.patterns))
-      .catch(() => setCatalogue([]))
+      .get<{ by_strategy: Record<string, FilterSpec> }>("/admin/pattern-catalogue")
+      .then((r) => setSpecs(r.by_strategy ?? {}))
+      .catch(() => setSpecs({}))
   }, [])
 
   useEffect(() => {
@@ -125,8 +133,9 @@ export default function BacktestTab() {
       .catch(() => setPatternStats([]))
   }, [mode, strategyKey])
 
+  const patternSpec = specs[strategyKey]
   const patternUniverse = (() => {
-    const all = new Set<string>(catalogue)
+    const all = new Set<string>(patternSpec?.catalogue ?? [])
     for (const s of patternStats) all.add(s.pattern)
     for (const p of patterns) all.add(p)
     const stat = new Map(patternStats.map((s) => [s.pattern, s]))
@@ -464,7 +473,7 @@ export default function BacktestTab() {
               className="flex w-full items-center justify-between text-left text-[11px] font-medium text-slate-300"
             >
               <span>
-                🕯️ Patterns to test{" "}
+                🕯️ {patternSpec?.label ?? "Patterns"} to test{" "}
                 {patterns.length > 0 ? (
                   <span className="text-sky-400">({patterns.length} selected)</span>
                 ) : (

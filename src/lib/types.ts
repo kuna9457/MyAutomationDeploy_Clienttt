@@ -155,9 +155,6 @@ export interface RunConfig {
   shared_with: number
 }
 
-/** One strategy and the stocks assigned to it (GET/PUT /admin/strategy-groups).
- *  A symbol may appear in several groups; only one trade in it opens at a
- *  time, enforced at execution by capital_ledger. */
 /* -- Advanced backtest: symbol x pattern combination search ---------------- */
 
 /** One (symbol, pattern) candidate. `screen_*` is the cheap attributed pass;
@@ -176,6 +173,10 @@ export interface SearchCombo {
   oos_win_rate: number
   oos_profit_factor: number | null
   oos_max_dd: number | null
+  /** The SAME symbol traded UNFILTERED over the SAME out-of-sample window. */
+  baseline_oos_return: number | null
+  /** oos_return − baseline_oos_return. Positive = the filter earned its place. */
+  edge: number | null
   /** holds | promising | overfit | thin | fails | unverified */
   verdict: string
   note: string
@@ -185,16 +186,32 @@ export interface SearchCombo {
 export interface SearchSymbolSummary {
   symbol: string
   trades: number
+  /** Unfiltered, over the WHOLE window (both halves). */
   return_pct: number
   win_rate: number
   source: string
+  /** Unfiltered, over the OUT-OF-SAMPLE window only — the like-for-like
+   *  comparison for a combination's OOS return. */
+  baseline_oos_return: number | null
   error?: string
 }
 
 export interface SearchBucket {
+  /** The validated PAIRINGS — the actual finding. */
+  pairs: SearchCombo[]
   symbols: string[]
   patterns: string[]
   combinations: SearchCombo[]
+  /** pattern -> symbols validated with it. A single pattern plus its symbols is
+   *  the one shape today's settings express exactly, with no cross-product. */
+  by_pattern: Record<string, string[]>
+  /** Cells the flat symbol×pattern lists would enable that this search already
+   *  marked `fails` or `overfit`. */
+  conflicts: { symbol: string; pattern: string; verdict: string; oos_return: number | null }[]
+  safe_plan: { pattern: string; symbols: string[] } | null
+  /** Profitable out of sample, but beaten by trading the symbol unfiltered. */
+  dropped_no_edge: { symbol: string; pattern: string; oos_return: number | null; edge: number | null }[]
+  truncated: number
   why: string
 }
 
@@ -222,6 +239,17 @@ export interface SearchJob {
 }
 
 /* -- Candlestick pattern allow-list --------------------------------------- */
+
+/** One filterable strategy's vocabulary and semantics.
+ *  kind "any-of"  — the signal names one thing; only listed names may fire.
+ *  kind "require" — the signal is a confluence score; at least one listed
+ *                   factor must be among its evidence. */
+export interface FilterSpec {
+  kind: "any-of" | "require"
+  label: string
+  help: string
+  catalogue: string[]
+}
 
 /** Which patterns may open a trade, for one strategy + mode.
  *  `enabled=false` OR an empty `allowed` means no filtering at all. */
@@ -428,6 +456,9 @@ export interface RRSweepResult {
   best_by_return: number | null
 }
 
+/** One strategy and the stocks assigned to it (GET/PUT /admin/strategy-groups).
+ *  A symbol may appear in several groups; only one trade in it opens at a
+ *  time, enforced at execution by capital_ledger. */
 export interface StrategyGroup {
   strategy_key: string
   symbols: string[]

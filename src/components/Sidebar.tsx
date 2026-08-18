@@ -24,7 +24,12 @@ const MODES = ["Intraday", "Swing", "Scalper"] as const
 // can be pattern-filtered. Mirrors pattern_config.FILTERABLE_STRATEGIES; the
 // server rejects anything else, so a drift here costs a hidden panel, never a
 // silently-ignored setting.
-const PATTERN_STRATEGIES: string[] = ["candlestick_engine", "candlestick_engine_v2"]
+const PATTERN_STRATEGIES: string[] = [
+  "candlestick_engine",
+  "candlestick_engine_v2",
+  "chart_pattern_engine",
+  "context_engine",
+]
 const BROKERS = ["Upstox", "Dhan", "Zerodha", "Kotak Neo"]
 const SEGMENT_LABELS: Record<string, string> = {
   NSE_EQUITY: "NSE Equity",
