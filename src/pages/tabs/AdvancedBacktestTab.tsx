@@ -62,13 +62,25 @@ export default function AdvancedBacktestTab() {
   // Read from the server rather than hardcoded, so the form can never
   // advertise a different ceiling from the one that is enforced.
   const [maxSymbols, setMaxSymbols] = useState(150)
+  // MCX margin per lot, so the form can warn about an unaffordable commodity
+  // BEFORE a run rather than returning a silent zero-trade result.
+  const [mcxMargin, setMcxMargin] = useState<Record<string, number>>({})
+  const [segment, setSegment] = useState<"NSE_EQUITY" | "MCX_COMMODITY">(
+    "NSE_EQUITY",
+  )
   const poll = useRef<number | null>(null)
 
   useEffect(() => {
     api.get<Instrument[]>("/config/instruments").then(setInstruments).catch(() => {})
     api
-      .get<{ max_symbols: number }>("/advanced-backtest/limits")
-      .then((l) => setMaxSymbols(l.max_symbols))
+      .get<{
+        max_symbols: number
+        mcx_margin_per_lot: Record<string, number>
+      }>("/advanced-backtest/limits")
+      .then((l) => {
+        setMaxSymbols(l.max_symbols)
+        setMcxMargin(l.mcx_margin_per_lot ?? {})
+      })
       .catch(() => {})
   }, [])
 
@@ -100,10 +112,18 @@ export default function AdvancedBacktestTab() {
     }
   }, [job?.id, job?.status])
 
-  const equity = instruments.filter((i) => i.segment === "NSE_EQUITY")
+  const equity = instruments.filter((i) => i.segment === segment)
   const shown = query.trim()
     ? equity.filter((i) => i.symbol.includes(query.trim().toUpperCase()))
     : equity
+  const isMcx = segment === "MCX_COMMODITY"
+  // Commodities are FIXED-LOT and margin-gated: one whose margin exceeds the
+  // capital can never open a position, and the run comes back with zero trades
+  // and no error. Naming them is the difference between "no edge here" and
+  // "this never actually traded".
+  const unaffordable = isMcx
+    ? symbols.filter((s2) => (mcxMargin[s2] ?? 0) > capital)
+    : []
 
   const startSearch = async () => {
     setError(null)
@@ -200,6 +220,20 @@ export default function AdvancedBacktestTab() {
             </select>
           </label>
           <label className="text-xs text-slate-400">
+            Segment
+            <select
+              value={segment}
+              onChange={(e) => {
+                setSegment(e.target.value as "NSE_EQUITY" | "MCX_COMMODITY")
+                setSymbols([])
+              }}
+              className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-slate-100"
+            >
+              <option value="NSE_EQUITY">Equity</option>
+              <option value="MCX_COMMODITY">Commodity (MCX)</option>
+            </select>
+          </label>
+          <label className="text-xs text-slate-400">
             Strategy
             <select
               value={strategyKey}
@@ -271,7 +305,8 @@ export default function AdvancedBacktestTab() {
         <div className="mt-3">
           <div className="mb-1 flex items-center justify-between">
             <span className="text-xs text-slate-400">
-              Symbols ({symbols.length} selected, max {maxSymbols}) — equity only
+              Symbols ({symbols.length} selected, max {maxSymbols}) —{" "}
+              {isMcx ? "MCX commodity" : "equity"}
             </span>
             <span className="flex gap-2">
               <button
@@ -326,9 +361,37 @@ export default function AdvancedBacktestTab() {
                 }`}
               >
                 {i.symbol}
+                {isMcx && mcxMargin[i.symbol] !== undefined && (
+                  <span
+                    className={
+                      mcxMargin[i.symbol] > capital
+                        ? "ml-1 text-red-400"
+                        : "ml-1 text-slate-500"
+                    }
+                    title={`Margin per lot Rs${mcxMargin[i.symbol].toLocaleString("en-IN")}`}
+                  >
+                    ₹{Math.round(mcxMargin[i.symbol] / 1000)}k
+                  </span>
+                )}
               </button>
             ))}
           </div>
+
+          {unaffordable.length > 0 && (
+            <p className="mt-1 rounded border border-red-900 bg-red-950/40 p-2 text-[11px] text-red-300">
+              {unaffordable.join(", ")} need more margin per lot than your
+              capital of ₹{capital.toLocaleString("en-IN")}. They will produce
+              ZERO trades — not a bad result, no result. Raise the capital or
+              deselect them.
+            </p>
+          )}
+          {isMcx && (
+            <p className="mt-1 text-[11px] text-amber-400">
+              Commodities trade a FIXED lot gated on margin, not a risk-solved
+              quantity like equity. Returns here are not comparable with equity
+              returns — compare commodities against each other only.
+            </p>
+          )}
         </div>
 
         <div className="mt-3 flex flex-wrap items-center gap-3">

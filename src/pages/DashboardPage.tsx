@@ -14,8 +14,11 @@ import TradeLogTab from "./tabs/TradeLogTab"
 import AdvancedBacktestTab from "./tabs/AdvancedBacktestTab"
 import AuditorTab from "./tabs/AuditorTab"
 import BacktestTab from "./tabs/BacktestTab"
+import CrudeoilPipelineTab from "./tabs/CrudeoilPipelineTab"
+import ErrorBoundary from "../components/ErrorBoundary"
 import TradeChartsTab from "./tabs/TradeChartsTab"
 import ClientsTab from "./tabs/ClientsTab"
+import BulkBacktestTab from "./tabs/BulkBacktestTab"
 
 const TABS = [
   { key: "dashboard", label: "🖥️ Live Dashboard" },
@@ -24,6 +27,8 @@ const TABS = [
   { key: "trades", label: "📒 Trade Log & Analytics" },
   { key: "backtest", label: "🧪 Backtesting Engine" },
   { key: "advanced", label: "🔬 Advanced Backtest" },
+  { key: "bulk", label: "🔎 Bulk Backtest" },
+  { key: "crudeoil", label: "🛢️ Crudeoil Pipeline" },
   { key: "charts", label: "📈 Trade Charts" },
   { key: "auditor", label: "🧠 AI Auditor" },
   { key: "clients", label: "👥 Clients" },
@@ -91,15 +96,23 @@ export default function DashboardPage() {
             ))}
           </nav>
 
-          {tab === "dashboard" && <LiveDashboardTab status={status} />}
-          {tab === "holdings" && <HoldingsTab status={status} onChanged={refresh} />}
-          {tab === "activity" && <ActivityTab status={status} />}
-          {tab === "trades" && <TradeLogTab />}
-          {tab === "backtest" && <BacktestTab />}
-          {tab === "advanced" && <AdvancedBacktestTab />}
-          {tab === "charts" && <TradeChartsTab />}
-          {tab === "auditor" && <AuditorTab />}
-          {tab === "clients" && <ClientsTab />}
+          {/* Each tab is isolated: React unmounts the WHOLE tree on an
+              uncaught render error, so without a boundary one broken panel
+              blanks the entire dashboard — bot controls and open positions
+              included. Keyed by tab so switching away clears a failed state. */}
+          <ErrorBoundary key={tab} name={TABS.find((t) => t.key === tab)?.label}>
+            {tab === "dashboard" && <LiveDashboardTab status={status} />}
+            {tab === "holdings" && <HoldingsTab status={status} onChanged={refresh} />}
+            {tab === "activity" && <ActivityTab status={status} />}
+            {tab === "trades" && <TradeLogTab />}
+            {tab === "backtest" && <BacktestTab />}
+            {tab === "advanced" && <AdvancedBacktestTab />}
+            {tab === "bulk" && <BulkBacktestTab />}
+            {tab === "crudeoil" && <CrudeoilPipelineTab />}
+            {tab === "charts" && <TradeChartsTab />}
+            {tab === "auditor" && <AuditorTab />}
+            {tab === "clients" && <ClientsTab />}
+          </ErrorBoundary>
         </main>
       </div>
     </div>

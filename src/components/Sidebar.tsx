@@ -585,6 +585,84 @@ export default function Sidebar({ status, onChanged }: Props) {
           </p>
         )}
 
+        {(() => {
+          /* Same guard as the Backtest tab: an MCX-only strategy with no
+             commodity selected would run and never signal. Checked against the
+             SELECTED symbols rather than a single ticker, because Start Bot
+             takes a basket. */
+          const sel = strategies.find((x) => x.key === strategyKey)
+          if (!sel?.segments?.length) return null
+          const chosen = instruments.filter((i) => symbols.includes(i.symbol))
+          if (!chosen.length) return null
+          const usable = chosen.filter((i) => sel.segments.includes(i.segment))
+          if (usable.length) return null
+          return (
+            <div className="mt-2 rounded-lg border border-amber-700/60 bg-amber-950/30 p-2 text-xs text-amber-200">
+              <span className="font-medium">⚠ No tradable symbol selected.</span>{" "}
+              {sel.name} only runs on{" "}
+              {sel.segments.includes("MCX_COMMODITY")
+                ? "MCX commodities"
+                : sel.segments.join(", ")}
+              , but none of the {chosen.length} selected symbol(s) are. The bot
+              would start and never signal. Add a commodity such as CRUDEOILM.
+            </div>
+          )
+        })()}
+
+        {/* Session-anchored strategies (today: Crudeoil) carry behaviour no
+            other strategy has — a foreign-session anchor, an opening range, a
+            higher-timeframe veto and a scale-out. Surfacing it here matters
+            because two of those are easy to get wrong from the outside: the
+            entry window is an EVENING one that shifts with US daylight
+            saving, and the scale-out does not apply to a 1-lot position.
+            Driven by the params themselves, not a hardcoded key list, so a
+            second session-anchored strategy gets this panel for free. */}
+        {(() => {
+          const sel = strategies.find((s) => s.key === strategyKey)
+          const p = sel?.params
+          if (!p?.orb_minutes) return null
+          const pct = Math.round((p.partial_exit_fraction ?? 0) * 100)
+          return (
+            <div className="mt-3 rounded-lg border border-amber-800/50 bg-amber-950/20 p-2">
+              <div className="mb-1 font-medium text-amber-300">
+                🛢️ Session-anchored strategy
+              </div>
+              <ul className="space-y-1 text-[11px] text-slate-400">
+                <li>
+                  <span className="text-slate-300">MCX commodities only.</span>{" "}
+                  Put CRUDEOIL / CRUDEOILM on the board — it will not signal on
+                  equity.
+                </li>
+                <li>
+                  Anchors VWAP and a {p.orb_minutes}-minute opening range to{" "}
+                  <span className="text-slate-300">
+                    {p.orb_anchor_hhmm} {p.orb_anchor_tz?.split("/")[1]?.replace("_", " ")}
+                  </span>{" "}
+                  — <span className="text-slate-300">18:30 IST</span> in summer,{" "}
+                  <span className="text-slate-300">19:30 IST</span> in winter.
+                  Entries are evening-only and the range must lock first.
+                </li>
+                {!!p.htf_minutes && (
+                  <li>
+                    Needs the {p.htf_minutes}m trend to agree; a flat higher
+                    timeframe blocks both sides.
+                  </li>
+                )}
+                {pct > 0 && (
+                  <li className="text-amber-200/80">
+                    <span className="font-medium">1 lot runs to the full target.</span>{" "}
+                    At 2+ lots it books {pct}% there, moves the rest to
+                    break-even
+                    {p.trail_remainder ? " and trails it" : ""}
+                    {p.runner_rr_mult ? ` toward 1:${p.runner_rr_mult}` : ""}.
+                  </li>
+                )}
+                <li>Flat by 23:15 IST — no overnight commodity risk.</li>
+              </ul>
+            </div>
+          )
+        })()}
+
         {PATTERN_STRATEGIES.includes(strategyKey) && (
           <div className="mt-3 border-t border-slate-800 pt-2">
             <button

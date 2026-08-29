@@ -45,6 +45,10 @@ export default function BacktestTab() {
   const [start, setStart] = useState(isoDaysAgo(DEFAULT_SPAN.Swing))
   const [end, setEnd] = useState(isoDaysAgo(0))
   const [capital, setCapital] = useState(100000)
+  // Intraday bar size to test. 0 = the mode's own (15m). Only meaningful for
+  // Intraday — Swing/Scalper ignore it server-side, so the control is hidden
+  // outside Intraday rather than sent-but-silently-dropped.
+  const [timeframeMinutes, setTimeframeMinutes] = useState(0)
   // Signal-score threshold to test. 0 = the strategy's own. This is the
   // point of the control: measure a threshold on real history before putting
   // it in front of the market.
@@ -101,6 +105,10 @@ export default function BacktestTab() {
       })
       .catch(() => {})
     setStart(isoDaysAgo(DEFAULT_SPAN[mode] ?? 30))
+    // The control is hidden outside Intraday; reset it too, or a value picked
+    // under Intraday would silently ride along into a Swing/Scalper request
+    // and get rejected server-side (timeframe_minutes is Intraday-only).
+    if (mode !== "Intraday") setTimeframeMinutes(0)
   }, [mode])
 
   const toggle = <T,>(list: T[], v: T) =>
@@ -182,6 +190,7 @@ export default function BacktestTab() {
           initial_capital: capital,
           min_score: minScore,
           risk_reward: rrMode === "single" ? riskReward : 0,
+          timeframe_minutes: timeframeMinutes,
           ...filters,
         })
         setBulk(res)
@@ -201,6 +210,7 @@ export default function BacktestTab() {
           rr_start: rrStart,
           rr_step: rrStep,
           rr_end: rrEnd,
+          timeframe_minutes: timeframeMinutes,
           ...filters,
         })
         setSweep(res)
@@ -216,6 +226,7 @@ export default function BacktestTab() {
           initial_capital: capital,
           min_score: minScore,
           risk_reward: riskReward,
+          timeframe_minutes: timeframeMinutes,
           ...filters,
         })
         setResult(res)
@@ -265,6 +276,24 @@ export default function BacktestTab() {
             ))}
           </select>
         </Field>
+        {mode === "Intraday" && (
+          <Field label="Timeframe">
+            <select
+              className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-slate-100"
+              value={timeframeMinutes}
+              onChange={(e) => setTimeframeMinutes(Number(e.target.value))}
+            >
+              <option value={0}>15m (default)</option>
+              <option value={5}>5m</option>
+            </select>
+            <p className="mt-1 text-[11px] text-slate-500">
+              5m fires ~3x more often on the same history. The indicator
+              lookbacks (MACD, ATR, trend window, cooldown) stay in BAR counts
+              — at 5m they cover 1/3 the wall-clock time they do at 15m, so
+              expect a noisier read, not a strictly better one.
+            </p>
+          </Field>
+        )}
         <Field label="Initial Capital (₹)">
           <input
             type="number"
@@ -362,6 +391,32 @@ export default function BacktestTab() {
               </option>
             ))}
           </select>
+          {(() => {
+            /* A session-anchored commodity strategy on an equity ticker returns
+               ZERO trades and no error: the US-open anchor (18:30/19:30 IST)
+               falls outside the 09:15-15:30 equity session, so the opening
+               range never forms. An empty result then reads as "no setups
+               found" rather than "wrong instrument" — so say it before the run. */
+            const sel = strategies.find((x) => x.key === strategyKey)
+            const inst = instruments.find((i) => i.symbol === ticker)
+            if (!sel?.segments?.length || !inst) return null
+            if (sel.segments.includes(inst.segment)) return null
+            const wanted = sel.segments.includes("MCX_COMMODITY")
+              ? "MCX commodities (e.g. CRUDEOILM)"
+              : sel.segments.join(", ")
+            return (
+              <div className="mt-2 rounded-lg border border-amber-700/60 bg-amber-950/30 p-2 text-xs text-amber-200">
+                <span className="font-medium">
+                  ⚠ {sel.name} cannot trade {ticker}.
+                </span>{" "}
+                It only runs on {wanted}. On an equity its US-session anchor
+                falls outside market hours, so this run returns{" "}
+                <span className="font-medium">zero trades</span> — not because
+                there were no setups, but because it never sees a tradable
+                session. Pick a commodity ticker above.
+              </div>
+            )
+          })()}
         </Field>
         <Field label="Start">
           <input

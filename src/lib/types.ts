@@ -21,6 +21,10 @@ export interface StrategyInfo {
    *  the score control is inert for it — the UI says so rather than letting
    *  a setting be silently ignored. */
   uses_min_score: boolean
+  /** Segments this strategy can trade. [] = any. A non-empty list that does
+   *  not include the selected ticker's segment means the run would return
+   *  zero trades with no error, so the UI warns instead. */
+  segments: string[]
   params: {
     timeframe: string
     risk_per_trade: number
@@ -31,6 +35,24 @@ export interface StrategyInfo {
     max_hold_minutes: number
     /** The strategy's OWN threshold — what "inherit" resolves to. */
     cs_min_score: number
+    /** Higher-timeframe bias filter, in minutes. 0 = single timeframe, which
+     *  is every strategy except the session-anchored ones. */
+    htf_minutes?: number
+    /** Opening-range window in minutes. 0 = this strategy has no opening
+     *  range; non-zero is what makes the UI show the session panel. */
+    orb_minutes?: number
+    /** IANA zone and wall-clock time the session is anchored to, e.g.
+     *  "America/New_York" + "09:00". Empty = anchored to the local day. */
+    orb_anchor_tz?: string
+    orb_anchor_hhmm?: string
+    /** Fraction booked at the first target on a MULTI-lot position. 0 = the
+     *  whole position exits at the target. A 1-lot position never scales out
+     *  whatever this says — it is indivisible. */
+    partial_exit_fraction?: number
+    /** Runner target as a multiple of the original risk, after the partial. */
+    runner_rr_mult?: number
+    /** Whether the remainder trails after the partial. */
+    trail_remainder?: boolean
   }
 }
 
@@ -163,6 +185,9 @@ export interface RunConfig {
 export interface SearchCombo {
   symbol: string
   pattern: string
+  /** "NSE_EQUITY" | "MCX_COMMODITY". Equity solves quantity from risk; MCX
+   *  trades a fixed lot, so returns across the two are not comparable. */
+  segment?: string
   screen_trades: number
   screen_pnl: number
   screen_win_rate: number
@@ -186,6 +211,11 @@ export interface SearchCombo {
 export interface SearchSymbolSummary {
   symbol: string
   trades: number
+  segment?: string
+  /** MCX only: margin one lot ties up. */
+  margin_per_lot?: number | null
+  /** MCX only: margin exceeded the run's capital, so it could never trade. */
+  unaffordable?: boolean
   /** Unfiltered, over the WHOLE window (both halves). */
   return_pct: number
   win_rate: number
@@ -815,4 +845,128 @@ export interface ClientModeInfo {
   label: string
   risk_reward: number
   instrument_count: number
+}
+
+/* -- Bulk Backtest: multi-axis optimizer funnel ----------------------------- */
+
+/** One row in the funnel's final result table. */
+/** One rung of a symbol's own hit-rate curve — see FunnelRow.rr_curve. */
+export interface RrHitPoint {
+  rr: number
+  trades: number
+  /** % of this pair's trades that reached this RR before exit. */
+  hit_rate: number
+  /** False when `trades` is below the funnel's reliability floor — the UI
+   *  should grey the point out rather than drop it. */
+  reliable: boolean
+}
+
+export interface FunnelRow {
+  symbol: string
+  strategy_key: string
+  segment: string
+  rr: number
+  /** Per-rung "how far does it actually get" — see RrHitPoint. Two symbols
+   *  can share the same `rr` (picked by net PnL) and still move completely
+   *  differently; this curve is what tells them apart. */
+  rr_curve: RrHitPoint[]
+  /** Median bars from entry to first reaching 1R, among trades that got
+   *  there at all. null if none did. Bar unit follows the run's mode (15m
+   *  Intraday, 1m Scalper, 1d Swing). */
+  median_bars_to_1r: number | null
+  /** This pair's best RR with NOTHING filtered (Round 0b). 0 = sweep not run. */
+  baseline_rr: number
+  baseline_trades: number
+  baseline_net_pnl: number
+  patterns: string[]
+  hours: number[]
+  days: number[]
+  screen_trades: number
+  screen_net_pnl: number
+  screen_gross_pnl: number
+  screen_costs: number
+  is_return: number | null
+  oos_return: number | null
+  folds_positive: number
+  folds_total: number
+  /** holds | promising | marginal | overfit | fails | unverified */
+  verdict: string
+  note: string
+  score: number
+}
+
+/** Progress of one round in the funnel. */
+export interface FunnelRound {
+  round: number
+  name: string
+  done: number
+  total: number
+  survivors: number
+  /** What `survivors` counts, when it isn't surviving pairs. */
+  survivors_label?: string
+}
+
+/** One rung of the unfiltered RR sweep, aggregated over the whole selection. */
+export interface FunnelBaselineRow {
+  rr: number
+  trades: number
+  gross_pnl: number
+  net_pnl: number
+  costs: number
+  win_rate: number
+  net_return_pct: number
+  pairs: number
+  pairs_positive: number
+}
+
+/** Round 0b — the unfiltered control: no patterns, no hours, no weekdays,
+ *  no score floor. Only RR varies. */
+export interface FunnelBaseline {
+  enabled: boolean
+  note: string
+  rr_ladder: number[]
+  by_rr: FunnelBaselineRow[]
+  best_rr: number
+  best_net_pnl: number
+  best_net_return_pct: number
+  best_trades: number
+  verdict: string
+  per_pair: {
+    symbol: string
+    strategy_key: string
+    segment: string
+    best_rr: number
+    trades: number
+    net_pnl: number
+    by_rr: Record<string, number>
+  }[]
+}
+
+/** The complete output of a funnel run. */
+export interface FunnelResults {
+  cancelled: boolean
+  table: FunnelRow[]
+  rounds: FunnelRound[]
+  /** null when the baseline sweep was switched off for this run. */
+  baseline: FunnelBaseline | null
+  holds: number
+  tested: number
+  elapsed: number
+  spec: Record<string, unknown>
+}
+
+/** A funnel job (running or finished). */
+export interface FunnelJob {
+  id: string
+  status: "running" | "done" | "cancelled" | "error"
+  created_at: string
+  done: number
+  total: number
+  round: number
+  round_name: string
+  label: string
+  elapsed: number
+  error: string
+  spec?: Record<string, unknown>
+  results?: FunnelResults | null
 }
