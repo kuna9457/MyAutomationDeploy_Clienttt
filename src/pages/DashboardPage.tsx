@@ -19,6 +19,7 @@ import ErrorBoundary from "../components/ErrorBoundary"
 import TradeChartsTab from "./tabs/TradeChartsTab"
 import ClientsTab from "./tabs/ClientsTab"
 import BulkBacktestTab from "./tabs/BulkBacktestTab"
+import BroadcastTab from "./tabs/BroadcastTab"
 
 const TABS = [
   { key: "dashboard", label: "🖥️ Live Dashboard" },
@@ -32,6 +33,7 @@ const TABS = [
   { key: "charts", label: "📈 Trade Charts" },
   { key: "auditor", label: "🧠 AI Auditor" },
   { key: "clients", label: "👥 Clients" },
+  { key: "broadcast", label: "📡 Broadcast" },
 ] as const
 
 type TabKey = (typeof TABS)[number]["key"]
@@ -112,6 +114,7 @@ export default function DashboardPage() {
             {tab === "charts" && <TradeChartsTab />}
             {tab === "auditor" && <AuditorTab />}
             {tab === "clients" && <ClientsTab />}
+            {tab === "broadcast" && <BroadcastTab />}
           </ErrorBoundary>
         </main>
       </div>

@@ -1,6 +1,8 @@
 export interface Instrument {
   symbol: string
-  segment: "NSE_EQUITY" | "MCX_COMMODITY"
+  /** Mirrors config.Segment. US_EQUITY trades New York hours and is
+   *  denominated in USD — see GET /config/sessions. */
+  segment: "NSE_EQUITY" | "MCX_COMMODITY" | "CRYPTO" | "US_EQUITY"
   lot_size: number
   tick_size: number
   reference_price: number
@@ -164,6 +166,15 @@ export interface RunConfig {
   atr_sl_mult?: number
   atr_period?: number
   min_score?: number
+  /** How an OPEN position is managed after its first target — one of the
+   *  backend's config.EXIT_STYLES. Absent on servers predating the field. */
+  exit_style?: string
+  /** Fraction booked at the first target; 0 = no partial. */
+  partial_exit_fraction?: number
+  /** Chandelier trail distance in ATR; 0 = nothing trails this run. */
+  trail_atr_mult?: number
+  /** Runner target in multiples of the original risk; 0 = trail only. */
+  runner_rr_mult?: number
   max_hold_minutes: number
   entry_skip_minutes?: number
   allow_short: boolean
@@ -672,7 +683,9 @@ export interface BrokerOnboardingInfo {
 }
 
 export interface BacktestResult {
-  metrics: Record<string, number | string>
+  // `boolean` is here for "Costs Applied", the flag that tells the tab whether
+  // the return/drawdown/win-rate figures beside it are already net of costs.
+  metrics: Record<string, number | string | boolean>
   equity_curve: { t: string; equity: number }[]
   trades: Record<string, unknown>[]
   analytics?: TradeAnalytics
@@ -702,6 +715,17 @@ export interface ClientOverviewRow {
   running: boolean
   environment: string | null
   broker: string | null
+  /** The fleet server this client trades on (Broadcast tab), or null when
+   *  they run on this server or are not running. */
+  node?: string | null
+  /** This client's one server (one client, one server). null = an account
+   *  made before servers existed — it needs one before it can trade. */
+  server?: {
+    node_id: string
+    name: string
+    connected: boolean
+    last_connected_at: string
+  } | null
   paper_total_pnl: number
   live_total_pnl: number
   broker_connected: string[]
@@ -713,6 +737,7 @@ export interface ClientStats {
   username: string
   environment: string
   running: boolean
+  node?: string | null
   summary: AnalyticsSummary
   daily_pnl: DailyPnlRow[]
   strategy_pnl: StrategyPnlRow[]
@@ -737,6 +762,12 @@ export interface AdminModeConfig {
    *  (15:09 equity, 23:15 MCX). Ignored for Swing. */
   square_off_time: string
   square_off_enabled: boolean
+  /** How an OPEN position is managed after its first target.
+   *  "strategy" (or absent, on configs saved before the field existed) =
+   *  inherit whatever the chosen strategy declares. */
+  exit_style?: string
+  /** Chandelier trail distance in ATR. 0 = the strategy's own. */
+  trail_atr_mult?: number
 }
 
 export interface AdminBotConfig {
@@ -969,4 +1000,26 @@ export interface FunnelJob {
   error: string
   spec?: Record<string, unknown>
   results?: FunnelResults | null
+}
+
+/** One segment's trading window, from GET /config/sessions. `ist` is the same
+ *  instant expressed in India time, and `ist_next_day` flags a US close that
+ *  lands after midnight IST. */
+export interface SessionClock {
+  local: string
+  ist: string
+  ist_next_day: boolean
+}
+
+export interface SessionWindow {
+  segment: string
+  label: string
+  timezone: string
+  currency: string
+  summary_ist: string
+  now_local: string
+  is_open_now: boolean
+  open: SessionClock | null
+  close: SessionClock | null
+  square_off: SessionClock | null
 }

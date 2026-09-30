@@ -62,6 +62,27 @@ export default function RunConfigPanel({ cfg }: { cfg: RunConfig | undefined }) 
             {cfg.min_score !== undefined && cfg.min_score > 0 && (
               <Row label="Min score" value={String(cfg.min_score)} />
             )}
+            {/* Only shown when something actually manages the exit. A plain
+                fixed-RR run says nothing here, exactly as before. */}
+            {((cfg.partial_exit_fraction ?? 0) > 0 ||
+              (cfg.trail_atr_mult ?? 0) > 0) && (
+              <Row
+                label="Exit management"
+                value={[
+                  (cfg.partial_exit_fraction ?? 0) > 0
+                    ? `book ${Math.round((cfg.partial_exit_fraction ?? 0) * 100)}% at 1R`
+                    : "",
+                  (cfg.trail_atr_mult ?? 0) > 0
+                    ? `trail ${cfg.trail_atr_mult}×ATR`
+                    : "",
+                  (cfg.runner_rr_mult ?? 0) > 0
+                    ? `runner 1:${cfg.runner_rr_mult}`
+                    : "",
+                ]
+                  .filter(Boolean)
+                  .join(", ")}
+              />
+            )}
             <Row
               label="Time exit"
               value={cfg.max_hold_minutes > 0 ? `${cfg.max_hold_minutes} min` : "off"}

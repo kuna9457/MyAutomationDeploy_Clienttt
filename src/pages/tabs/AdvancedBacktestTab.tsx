@@ -55,6 +55,8 @@ export default function AdvancedBacktestTab() {
   const [capital, setCapital] = useState(100000)
   const [riskReward, setRiskReward] = useState(2)
   const [split, setSplit] = useState(0.7)
+  // Held fixed for the search, like RR and score — see the help text.
+  const [exitStyle, setExitStyle] = useState("strategy")
   const [job, setJob] = useState<SearchJob | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [onlyKeepers, setOnlyKeepers] = useState(false)
@@ -139,6 +141,7 @@ export default function AdvancedBacktestTab() {
           mode,
           strategy_key: strategyKey,
           risk_reward: riskReward,
+          exit_style: exitStyle,
           split,
         },
       )
@@ -207,6 +210,24 @@ export default function AdvancedBacktestTab() {
 
       <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-3">
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <label className="text-xs text-slate-400">
+            Exit style
+            <select
+              value={exitStyle}
+              onChange={(e) => setExitStyle(e.target.value)}
+              className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-slate-100"
+            >
+              <option value="strategy">Strategy's own (default)</option>
+              <option value="fixed">Fixed 1:R — baseline</option>
+              <option value="trail_full">Trail full position (Approach 1)</option>
+              <option value="partial_trail">Partial + trail runner (Approach 2)</option>
+              <option value="partial_lock">Partial + lock TP1 (Approach 2b)</option>
+              <option value="partial_ladder">Partial + lock TP1 at trigger (Approach 2c)</option>
+            </select>
+            <span className="mt-1 block text-[10px] leading-tight text-slate-500">
+              Held FIXED for the whole run. Leave it at the default and this screens the PLAIN fixed exit — a different bot from the one the Backtesting tab reports, so its ranking will not transfer. Pick the style you intend to trade.
+            </span>
+          </label>
           <label className="text-xs text-slate-400">
             Mode
             <select

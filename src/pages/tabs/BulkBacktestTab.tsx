@@ -97,6 +97,8 @@ export default function BulkBacktestTab() {
   const [capital, setCapital] = useState(100000)
   const [folds, setFolds] = useState(4)
   const [baselineSweep, setBaselineSweep] = useState(true)
+  // Held fixed across every round of the funnel — see the help text.
+  const [exitStyle, setExitStyle] = useState("strategy")
   const [segment, setSegment] = useState<"NSE_EQUITY" | "MCX_COMMODITY">("NSE_EQUITY")
   const [job, setJob] = useState<FunnelJob | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -182,6 +184,7 @@ export default function BulkBacktestTab() {
         mode,
         folds,
         baseline_rr_sweep: baselineSweep,
+        exit_style: exitStyle,
       })
       const j = await api.get<FunnelJob>(`/bulk-backtest/jobs/${resp.job_id}`)
       setJob(j)
@@ -235,6 +238,24 @@ export default function BulkBacktestTab() {
                 <option value="NSE_EQUITY">NSE Equity</option>
                 <option value="MCX_COMMODITY">MCX Commodity</option>
               </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs text-slate-400">Exit style</label>
+              <select
+                value={exitStyle}
+                onChange={(e) => setExitStyle(e.target.value)}
+                className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200"
+              >
+                <option value="strategy">Strategy's own (default)</option>
+                <option value="fixed">Fixed 1:R — baseline</option>
+                <option value="trail_full">Trail full position (Approach 1)</option>
+                <option value="partial_trail">Partial + trail runner (Approach 2)</option>
+                <option value="partial_lock">Partial + lock TP1 (Approach 2b)</option>
+                <option value="partial_ladder">Partial + lock TP1 at trigger (Approach 2c)</option>
+              </select>
+              <p className="mt-1 max-w-xs text-[10px] leading-tight text-slate-500">
+                Held FIXED for the whole run. Leave it at the default and this screens the PLAIN fixed exit — a different bot from the one the Backtesting tab reports, so its ranking will not transfer. Pick the style you intend to trade.
+              </p>
             </div>
             <div>
               <label className="mb-1 block text-xs text-slate-400">Mode</label>

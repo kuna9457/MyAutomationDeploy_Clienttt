@@ -2,15 +2,19 @@ import { useEffect, useState } from "react"
 import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts"
 import BacktestAnalytics from "../../components/BacktestAnalytics"
 import DataTable from "../../components/DataTable"
+import TradeChart, { type ChartFocus } from "../../components/TradeChart"
 import { api, ApiError } from "../../lib/api"
 import type {
   BacktestResult,
+  ChartCandles,
+  ChartTrade,
   BulkBacktestResult,
   FilterSpec,
   Instrument,
   PatternRules,
   PatternStat,
   RRSweepResult,
+  SessionWindow,
   StrategyInfo,
 } from "../../lib/types"
 
@@ -49,6 +53,23 @@ export default function BacktestTab() {
   // Intraday — Swing/Scalper ignore it server-side, so the control is hidden
   // outside Intraday rather than sent-but-silently-dropped.
   const [timeframeMinutes, setTimeframeMinutes] = useState(0)
+  // How an OPEN position is managed after its first target. The backtester
+  // and the live engine share one exit state-machine (backend/exit_manager.py),
+  // so what this measures is what the bot would actually do.
+  const [exitStyle, setExitStyle] = useState("strategy")
+  const [trailAtrMult, setTrailAtrMult] = useState(0)
+  const [partialFraction, setPartialFraction] = useState(-1)
+  // Bounds on the ATR stop, in percent of price. 0 = the strategy's own.
+  const [maxStopPct, setMaxStopPct] = useState(0)
+  const [minStopPct, setMinStopPct] = useState(0)
+  // Let a position live past the 15:09 flat-out and close on its own stop,
+  // target or trail. BACKTEST ONLY — it does not configure the live bot, and
+  // a position held past the close is delivery, which this run does not price.
+  const [holdOvernight, setHoldOvernight] = useState(false)
+  // Drop the strategy's late-entry gate (11:59 for Candlestick Intraday).
+  // Deliberately separate from the above: this changes how many trades are
+  // TAKEN, that one changes how they CLOSE.
+  const [ignoreEntryCutoff, setIgnoreEntryCutoff] = useState(false)
   // Signal-score threshold to test. 0 = the strategy's own. This is the
   // point of the control: measure a threshold on real history before putting
   // it in front of the market.
@@ -56,6 +77,17 @@ export default function BacktestTab() {
   // Risk:reward to test. 0 = the strategy's own, matching the server-side
   // convention everywhere else (config.RR_CHOICES, admin overrides).
   const [riskReward, setRiskReward] = useState(0)
+  // Ratios offered in the picker, from config.RR_CHOICES so the list cannot
+  // drift from the backend's. The fallback keeps the control usable if the
+  // request fails — the backtest route accepts any ratio, it does not validate
+  // against this list, so a stale fallback can never reject a valid run.
+  const [rrChoices, setRrChoices] = useState<number[]>([1, 1.5, 2, 2.5, 3])
+  // "Custom…" reveals the free number box for a ratio not on the list.
+  const [rrCustom, setRrCustom] = useState(false)
+  // Session windows per segment, in the exchange's clock AND IST. Fetched so a
+  // US ticker can tell an India-based operator when its session actually is —
+  // 09:30 New York means nothing until you know it is 19:00 at your desk.
+  const [sessions, setSessions] = useState<Record<string, SessionWindow>>({})
   // "single" runs one backtest; "sweep" runs one per RR in a ladder so the
   // best ratio for this symbol/window is visible in one shot instead of
   // re-running the form by hand.
@@ -87,12 +119,34 @@ export default function BacktestTab() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<BacktestResult | null>(null)
+  // Candle chart of the run just executed — loaded on demand, because it is a
+  // few thousand bars and most runs are only ever read as a metrics table.
+  const [chart, setChart] = useState<ChartCandles | null>(null)
+  const [chartBusy, setChartBusy] = useState(false)
+  const [focus, setFocus] = useState<ChartFocus | null>(null)
+  const [focusId, setFocusId] = useState<string>("")
+  const [reasonFilter, setReasonFilter] = useState<string>("")
 
   useEffect(() => {
     api.get<Instrument[]>("/config/instruments").then((list) => {
       setInstruments(list)
       if (list.length) setTicker(list[0].symbol)
     })
+    api
+      .get<{ choices: { value: number; label: string }[] }>("/config/rr-choices")
+      .then((r) => {
+        const vals = (r.choices ?? []).map((c) => c.value).filter((v) => v > 0)
+        if (vals.length) setRrChoices(vals)
+      })
+      .catch(() => {/* keep the fallback list */})
+    api
+      .get<SessionWindow[]>("/config/sessions")
+      .then((rows) => {
+        const by: Record<string, SessionWindow> = {}
+        for (const r of rows) by[r.segment] = r
+        setSessions(by)
+      })
+      .catch(() => {/* the banner just stays hidden */})
   }, [])
 
   useEffect(() => {
@@ -113,6 +167,90 @@ export default function BacktestTab() {
 
   const toggle = <T,>(list: T[], v: T) =>
     list.includes(v) ? list.filter((x) => x !== v) : [...list, v]
+
+  /* The entry filters every request shape shares. */
+  type RunFilters = {
+    trade_days: number[]
+    trade_hours: number[]
+    side: string
+    patterns: string[]
+  }
+
+  /* The knobs that decide WHAT BOT is measured, as opposed to which symbol or
+   * window. Sent by the single run, the bulk screen AND the RR sweep — a bulk
+   * ranking scored against a different exit rule than the detail view would
+   * quietly rank the wrong symbols. */
+  const runShape = () => ({
+    exit_style: exitStyle,
+    trail_atr_mult: trailAtrMult,
+    partial_exit_fraction: partialFraction,
+    max_stop_pct: maxStopPct,
+    min_stop_pct: minStopPct,
+    hold_overnight: holdOvernight,
+    ignore_entry_cutoff: ignoreEntryCutoff,
+  })
+
+  /* THE single-run request, in one place. /backtest/run and /backtest/chart
+   * must be handed identical inputs or the chart would draw a different run
+   * than the table above it — the one way this feature could quietly lie. */
+  const singleRunBody = (filters: RunFilters) => ({
+    ticker,
+    mode,
+    strategy_key: strategyKey,
+    start,
+    end,
+    initial_capital: capital,
+    min_score: minScore,
+    risk_reward: riskReward,
+    timeframe_minutes: timeframeMinutes,
+    exit_style: exitStyle,
+    trail_atr_mult: trailAtrMult,
+    partial_exit_fraction: partialFraction,
+    max_stop_pct: maxStopPct,
+    min_stop_pct: minStopPct,
+    hold_overnight: holdOvernight,
+    ignore_entry_cutoff: ignoreEntryCutoff,
+    ...filters,
+  })
+
+  const currentFilters = (): RunFilters => ({
+    trade_days: tradeDays,
+    trade_hours: tradeHours,
+    side,
+    patterns: PATTERN_STRATEGIES.includes(strategyKey) ? patterns : [],
+  })
+
+  const loadChart = async () => {
+    setChartBusy(true)
+    setError(null)
+    try {
+      const res = await api.post<ChartCandles>("/backtest/chart",
+        singleRunBody(currentFilters()))
+      setChart(res)
+      setFocus(null)
+      setFocusId("")
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not draw the chart.")
+    } finally {
+      setChartBusy(false)
+    }
+  }
+
+  /* Seconds per bar, so the zoom window is a fixed number of BARS either side
+   * of the trade rather than a fixed number of minutes — 30 bars is the right
+   * amount of context on 1m and on daily alike. */
+  const barSeconds = (interval: string) =>
+    interval === "1d" ? 86_400 : 60 * (parseInt(interval, 10) || 15)
+
+  const focusTrade = (t: ChartTrade) => {
+    if (!chart) return
+    const pad = barSeconds(chart.interval) * 30
+    setFocus({
+      from: t.entry_time - pad,
+      to: (t.exit_time ?? t.entry_time) + pad,
+    })
+    setFocusId(t.id)
+  }
 
   // Catalogue is static; stats and the saved filter follow mode/strategy so
   // the picker always describes the run about to happen.
@@ -166,6 +304,12 @@ export default function BacktestTab() {
   const run = async () => {
     setBusy(true)
     setError(null)
+    // Drop the previous run's chart. Leaving it up beside fresh metrics would
+    // show candles from one set of inputs under numbers from another, which is
+    // exactly the confusion this feature exists to remove.
+    setChart(null)
+    setFocus(null)
+    setFocusId('')
     // Filters travel with every request shape below, so the single run, the
     // sweep and the bulk run are always measuring the same slice of history.
     const filters = {
@@ -191,6 +335,7 @@ export default function BacktestTab() {
           min_score: minScore,
           risk_reward: rrMode === "single" ? riskReward : 0,
           timeframe_minutes: timeframeMinutes,
+          ...runShape(),
           ...filters,
         })
         setBulk(res)
@@ -211,24 +356,15 @@ export default function BacktestTab() {
           rr_step: rrStep,
           rr_end: rrEnd,
           timeframe_minutes: timeframeMinutes,
+          ...runShape(),
           ...filters,
         })
         setSweep(res)
         setResult(null)
         setBulk(null)
       } else {
-        const res = await api.post<BacktestResult>("/backtest/run", {
-          ticker,
-          mode,
-          strategy_key: strategyKey,
-          start,
-          end,
-          initial_capital: capital,
-          min_score: minScore,
-          risk_reward: riskReward,
-          timeframe_minutes: timeframeMinutes,
-          ...filters,
-        })
+        const res = await api.post<BacktestResult>("/backtest/run",
+          singleRunBody(filters))
         setResult(res)
         setSweep(null)
         setBulk(null)
@@ -249,6 +385,23 @@ export default function BacktestTab() {
 
   return (
     <div className="space-y-6">
+      {(() => {
+        const seg = instruments.find((i) => i.symbol === ticker)?.segment
+        const w = seg ? sessions[seg] : undefined
+        if (!w || seg !== "US_EQUITY") return null
+        return (
+          <div className="rounded-lg border border-sky-900/50 bg-sky-950/20 px-3 py-2 text-xs">
+            <span className="font-semibold text-sky-300">{ticker} trades on US hours</span>
+            <span className="ml-3 text-slate-300">{w.summary_ist}</span>
+            <div className="mt-1 text-[11px] text-slate-500">
+              Capital and P&amp;L for this symbol are in{" "}
+              <span className="font-mono text-slate-300">{w.currency}</span>. The
+              square-off is {w.square_off?.local} New York — shown above in your
+              time, and it shifts by an hour when US daylight saving changes.
+            </div>
+          </div>
+        )
+      })()}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
         <Field label="Ticker">
           <select
@@ -294,6 +447,139 @@ export default function BacktestTab() {
             </p>
           </Field>
         )}
+        {(
+          <Field label="Exit style">
+            <select
+              className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-slate-100"
+              value={exitStyle}
+              onChange={(e) => setExitStyle(e.target.value)}
+            >
+              <option value="strategy">Strategy's own (default)</option>
+              <option value="fixed">Fixed 1:R — baseline</option>
+              <option value="trail_full">Trail full position (Approach 1)</option>
+              <option value="partial_trail">Partial + trail runner (Approach 2)</option>
+              <option value="partial_lock">Partial + lock TP1, hold for TP2 (Approach 2b)</option>
+              <option value="partial_ladder">Partial + break-even, lock TP1 at midpoint (Approach 2c)</option>
+            </select>
+            <p className="mt-1 text-[11px] text-slate-500">
+              What happens AFTER the first target. The entry, the initial ATR
+              stop/target and the position size are identical across all four —
+              only the management differs, so the runs are comparable. Run
+              "Fixed" first: that is the baseline the other two have to beat
+              NET of costs, and a partial pays a second exit's costs. Both
+              managed styles move the stop to break-even plus 20 bps, which is
+              what a runner's own round trip actually costs — about a third of
+              a typical intraday stop, so protecting it is not free.
+            </p>
+          </Field>
+        )}
+        {!bulkMode && rrMode !== "sweep" && (exitStyle === "trail_full"
+          || exitStyle === "partial_trail") && (
+          <Field label="Trail distance (×ATR, 0 = strategy's own)">
+            <input
+              type="number"
+              min={0}
+              max={10}
+              step={0.25}
+              className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-slate-100"
+              value={trailAtrMult}
+              onChange={(e) => setTrailAtrMult(Number(e.target.value))}
+            />
+            <p className="mt-1 text-[11px] text-slate-500">
+              The chandelier sits this far behind the best price seen. Sweep it
+              one step at a time and look for a smooth plateau, not a single
+              spike — a lone best value is a curve fit. Separate from the ATR
+              stop multiple on purpose: this never moves the ENTRY stop.
+            </p>
+          </Field>
+        )}
+        {!bulkMode && rrMode !== "sweep"
+          && (exitStyle === "partial_trail" || exitStyle === "partial_lock") && (
+          <Field label="Partial booked at 1R (-1 = 50%)">
+            <input
+              type="number"
+              min={-1}
+              max={0.9}
+              step={0.05}
+              className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-slate-100"
+              value={partialFraction}
+              onChange={(e) => setPartialFraction(Number(e.target.value))}
+            />
+            <p className="mt-1 text-[11px] text-slate-500">
+              Fraction of the position booked when the first target prints; the
+              rest runs behind the trail from break-even. A ONE-lot position
+              never splits — it runs to the full target — so this changes
+              nothing for symbols the account can only afford one lot of.
+            </p>
+          </Field>
+        )}
+        {(
+          <Field label="Stop distance band (% of price, 0 = off)">
+            <div className="flex gap-2">
+              <input
+                type="number" min={0} max={20} step={0.05}
+                className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-slate-100"
+                value={minStopPct}
+                onChange={(e) => setMinStopPct(Number(e.target.value))}
+                placeholder="min %"
+              />
+              <input
+                type="number" min={0} max={20} step={0.05}
+                className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-slate-100"
+                value={maxStopPct}
+                onChange={(e) => setMaxStopPct(Number(e.target.value))}
+                placeholder="max %"
+              />
+            </div>
+            <p className="mt-1 text-[11px] text-slate-500">
+              Bounds the ATR stop — it is still computed the same way, just
+              held inside this band, and the target moves with it so the RR is
+              unchanged. Fixes the setup whose target is so far away the
+              session never reaches it. ⚠️ Measured on 8 names it made things
+              WORSE: capping converts sideways square-off exits (~−₹65 each)
+              into stop-outs (~−₹1,200 each). Backtest it on your own symbols
+              before trusting it.
+            </p>
+          </Field>
+        )}
+        <Field label="Holding rules">
+          <label className="flex items-start gap-2 text-[13px] text-slate-200">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={holdOvernight}
+              onChange={(e) => setHoldOvernight(e.target.checked)}
+            />
+            <span>Hold past the close (exit only on SL / TP / trail)</span>
+          </label>
+          <p className="mt-1 text-[11px] text-slate-500">
+            Removes the 15:09 square-off, so a position closes only on its own
+            stop, target or trail — over days if that is what it takes.
+            ⚠️ This is no longer an intraday trade: held past the close it is
+            DELIVERY, so (a) it cannot be short, (b) it pays delivery STT/stamp
+            (~28bps of turnover) that this run still charges at the intraday
+            rate (~10bps), and (c) an overnight gap through the stop is filled
+            AT the stop, a price the market never offered. All three flatter
+            the result. Treat it as “does the signal have edge with room?”,
+            not as a P&amp;L forecast.
+          </p>
+          <label className="mt-2 flex items-start gap-2 text-[13px] text-slate-200">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={ignoreEntryCutoff}
+              onChange={(e) => setIgnoreEntryCutoff(e.target.checked)}
+            />
+            <span>Ignore the late-entry cutoff</span>
+          </label>
+          <p className="mt-1 text-[11px] text-slate-500">
+            Drops the strategy’s no-new-entries gate (11:59 for Candlestick
+            Intraday), roughly doubling the trade count. Kept separate from the
+            box above on purpose — that one changes how trades CLOSE, this one
+            changes how many are TAKEN. Move one at a time or the result cannot
+            be attributed to either.
+          </p>
+        </Field>
         <Field label="Initial Capital (₹)">
           <input
             type="number"
@@ -328,17 +614,53 @@ export default function BacktestTab() {
           </select>
           {rrMode === "single" ? (
             <>
-              <input
-                type="number"
-                min={0}
-                step={0.1}
+              {/* Pick the ratio the way it is written (1 : 1.5), not as the
+                  bare multiplier it is stored as. "Custom" keeps the free box
+                  for anything off the list, since the backtest route accepts
+                  any ratio. */}
+              <select
                 className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-slate-100"
-                value={riskReward}
-                onChange={(e) => setRiskReward(Number(e.target.value))}
-              />
+                aria-label="Risk to reward ratio"
+                value={rrCustom ? "custom" : String(riskReward)}
+                onChange={(e) => {
+                  const v = e.target.value
+                  if (v === "custom") {
+                    setRrCustom(true)
+                    if (riskReward <= 0) setRiskReward(1.5)
+                  } else {
+                    setRrCustom(false)
+                    setRiskReward(Number(v))
+                  }
+                }}
+              >
+                <option value="0">Strategy's own</option>
+                {rrChoices.map((v) => (
+                  <option key={v} value={String(v)}>
+                    {`1 : ${v}  —  risk ₹1 to make ₹${v}`}
+                  </option>
+                ))}
+                <option value="custom">Custom…</option>
+              </select>
+              {rrCustom && (
+                <div className="mt-1 flex items-center gap-2">
+                  <span className="text-sm text-slate-400">1 :</span>
+                  <input
+                    type="number"
+                    min={0.1}
+                    step={0.1}
+                    aria-label="Custom reward per 1 unit of risk"
+                    className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-slate-100"
+                    value={riskReward}
+                    onChange={(e) => setRiskReward(Number(e.target.value))}
+                  />
+                </div>
+              )}
               <p className="mt-1 text-[11px] text-slate-500">
-                Reward per 1 unit of risk — 2 means 1:2. 0 uses the strategy's
-                own.
+                {riskReward > 0
+                  ? `Target sits ${riskReward}× the stop distance away. If your stop is ₹5 below entry, the target is ₹${(
+                      riskReward * 5
+                    ).toFixed(2)} above it.`
+                  : "Uses whatever ratio the chosen strategy declares for this mode."}
               </p>
             </>
           ) : (
@@ -816,12 +1138,57 @@ export default function BacktestTab() {
       {m && (
         <>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
-            <Stat label="Total Return %" value={String(m["Total Return %"])} />
+            <Stat label={m["Costs Applied"] ? "Net Return %" : "Total Return %"}
+                  value={String(m["Total Return %"])} />
             <Stat label="Max Drawdown %" value={String(m["Max Drawdown %"])} />
             <Stat label="Sharpe" value={String(m["Sharpe"])} />
             <Stat label="Calmar" value={String(m["Calmar"])} />
-            <Stat label="Win Rate %" value={String(m["Win Rate %"])} />
+            <Stat label={m["Costs Applied"] ? "Net Win Rate %" : "Win Rate %"}
+                  value={String(m["Win Rate %"])} />
           </div>
+
+          {/* Cost breakdown. Every metric above is already net of these — this
+              row exists so the size of the drag is explicit rather than a
+              difference the reader has to work out. */}
+          {m["Costs Applied"] === true && (
+            <div className="rounded-lg border border-amber-900/50 bg-amber-950/20 px-3 py-2">
+              <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1 text-xs">
+                <span className="font-semibold text-amber-300">
+                  After costs
+                </span>
+                <span className="text-slate-400">
+                  Gross return{" "}
+                  <span className="font-mono text-slate-200">
+                    {String(m["Gross Return %"])}%
+                  </span>
+                </span>
+                <span className="text-slate-400">
+                  Costs{" "}
+                  <span className="font-mono text-red-300">
+                    −₹{String(m["Total Costs"])}
+                  </span>
+                </span>
+                <span className="text-slate-400">
+                  Per trade{" "}
+                  <span className="font-mono text-red-300">
+                    −₹{String(m["Cost per Trade"])}
+                  </span>
+                </span>
+                <span className="text-slate-400">
+                  Gross win rate{" "}
+                  <span className="font-mono text-slate-200">
+                    {String(m["Gross Win Rate %"])}%
+                  </span>
+                </span>
+              </div>
+              <div className="mt-1 text-[11px] text-slate-500">
+                Brokerage, STT, exchange, GST, stamp, SEBI and an estimated
+                3&nbsp;bps/leg slippage, charged per round trip and taken out of
+                the capital the next trade is sized from.
+              </div>
+            </div>
+          )}
+
           <p className="text-xs text-slate-500">
             Trades: {String(m["Total Trades"])} · Final Equity: ₹{String(m["Final Equity"])} ·
             Data source: {String(m["Data Source"])}
@@ -858,6 +1225,111 @@ export default function BacktestTab() {
 
           {result && result.trades.length > 0 && (
             <div>
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <h3 className="text-sm font-semibold text-slate-200">
+                  🕯️ Trades on the chart
+                </h3>
+                <button
+                  onClick={loadChart}
+                  disabled={chartBusy}
+                  className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
+                >
+                  {chartBusy
+                    ? "Drawing…"
+                    : chart
+                      ? "Redraw"
+                      : "Plot these trades on candles"}
+                </button>
+              </div>
+
+              {!chart && !chartBusy && (
+                <p className="mb-4 text-[11px] text-slate-500">
+                  Draws every entry and exit on the same candles the simulation
+                  walked, with the risk box (entry → stop) and reward box
+                  (entry → first target) behind them. A metrics table tells you
+                  a run lost money; this is how you see WHERE — the setups that
+                  never move, the stops sitting inside the noise, the trades
+                  that die at the square-off.
+                </p>
+              )}
+
+              {chart && (
+                <div className="mb-4 space-y-2">
+                  {!chart.is_real_data && (
+                    <p className="rounded-lg border border-amber-700/50 bg-amber-950/30 px-3 py-2 text-[11px] text-amber-300">
+                      ⚠️ These candles are a SYNTHETIC random walk — no real
+                      history was available for {chart.symbol}. The shapes mean
+                      nothing; don't read setups off them.
+                    </p>
+                  )}
+                  <TradeChart data={chart} focus={focus} />
+
+                  {/* The picker. Six months of 15-minute bars is a wall of
+                      candles — jumping straight to one trade is what makes the
+                      chart diagnosable rather than merely decorative. */}
+                  <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                    <span className="text-slate-400">Jump to:</span>
+                    <select
+                      className="rounded-lg border border-slate-700 bg-slate-950 px-2 py-1 text-slate-200"
+                      value={reasonFilter}
+                      onChange={(e) => setReasonFilter(e.target.value)}
+                    >
+                      <option value="">all exits ({chart.trades.length})</option>
+                      {[...new Set(chart.trades.map((t) =>
+                        t.exit_reason.split(" ")[0]))]
+                        .sort()
+                        .map((r) => (
+                          <option key={r} value={r}>
+                            {r} (
+                            {chart.trades.filter((t) =>
+                              t.exit_reason.startsWith(r)).length}
+                            )
+                          </option>
+                        ))}
+                    </select>
+                    <button
+                      onClick={() => {
+                        setFocus(null)
+                        setFocusId("")
+                      }}
+                      className="rounded-lg border border-slate-700 px-2 py-1 text-slate-300 hover:bg-slate-800"
+                    >
+                      whole run
+                    </button>
+                  </div>
+
+                  <div className="flex max-h-40 flex-wrap gap-1 overflow-y-auto rounded-lg border border-slate-800 bg-slate-900/40 p-2">
+                    {chart.trades
+                      .filter((t) =>
+                        !reasonFilter || t.exit_reason.startsWith(reasonFilter))
+                      .map((t) => (
+                        <button
+                          key={t.id}
+                          onClick={() => focusTrade(t)}
+                          title={`${t.entry_reason} → ${t.exit_reason}`}
+                          className={`rounded px-1.5 py-0.5 text-[10px] tabular-nums ${
+                            focusId === t.id
+                              ? "bg-indigo-600 text-white"
+                              : t.win
+                                ? "bg-emerald-900/40 text-emerald-300 hover:bg-emerald-900/70"
+                                : "bg-rose-900/40 text-rose-300 hover:bg-rose-900/70"
+                          }`}
+                        >
+                          #{t.id} {t.side === "BUY" ? "▲" : "▼"}{" "}
+                          {t.pnl >= 0 ? "+" : ""}
+                          {Math.round(t.pnl)}
+                        </button>
+                      ))}
+                  </div>
+                  <p className="text-[11px] text-slate-500">
+                    Boxes are the levels the trade OPENED with. A managed style
+                    moves them afterwards, so an exit arrow landing beyond the
+                    green box is the runner having gone past its first target —
+                    and one landing inside it is the stop having been moved up.
+                  </p>
+                </div>
+              )}
+
               <h3 className="mb-2 text-sm font-semibold text-slate-200">Backtest Trades</h3>
               <DataTable
                 rows={result.trades}

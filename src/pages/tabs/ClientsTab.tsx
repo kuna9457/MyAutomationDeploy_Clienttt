@@ -1,7 +1,9 @@
 import { useState, type FormEvent } from "react"
 import DataTable from "../../components/DataTable"
 import ClientStatsPanel from "../../components/ClientStatsPanel"
+import ServerSecretBox from "../../components/ServerSecretBox"
 import { api, ApiError } from "../../lib/api"
+import type { NewFleetNode } from "../../lib/fleetTypes"
 import { usePolling } from "../../lib/usePolling"
 import type { ClientOverviewRow } from "../../lib/types"
 
@@ -21,6 +23,9 @@ export default function ClientsTab() {
   const [resetTarget, setResetTarget] = useState<ClientOverviewRow | null>(null)
   const [newPassword, setNewPassword] = useState("")
   const [statsFor, setStatsFor] = useState<ClientOverviewRow | null>(null)
+  // The server credentials just issued (at creation, or a new secret) — shown
+  // ONCE, because the hub keeps only a hash of the secret.
+  const [issued, setIssued] = useState<{ client: string; server: NewFleetNode } | null>(null)
 
   const { data: clients, refresh } = usePolling<ClientOverviewRow[]>(
     () => api.get<ClientOverviewRow[]>("/admin/clients-overview"),
@@ -31,9 +36,21 @@ export default function ClientsTab() {
     e.preventDefault()
     setBusy(true)
     setMsg(null)
+    setIssued(null)
     try {
-      await api.post("/admin/users", { username, password, display_name: displayName, email })
-      setMsg({ kind: "ok", text: `Created client '${username}'. Share the username/password with them directly — they can reset it themselves later via ${email}.` })
+      const res = await api.post<{ server?: NewFleetNode; server_error?: string }>(
+        "/admin/users",
+        { username, password, display_name: displayName, email },
+      )
+      if (res.server) setIssued({ client: username, server: res.server })
+      setMsg(
+        res.server_error
+          ? { kind: "err", text: `${res.server_error} Use “Create server” on their row.` }
+          : {
+              kind: "ok",
+              text: `Created client '${username}' and their server. Set up the server with the lines below, then give the client their login address, username and password — they can reset the password themselves via ${email}.`,
+            },
+      )
       setUsername("")
       setPassword("")
       setDisplayName("")
@@ -43,6 +60,35 @@ export default function ClientsTab() {
       setMsg({ kind: "err", text: err instanceof ApiError ? err.message : "Failed to create client." })
     } finally {
       setBusy(false)
+    }
+  }
+
+  const createServer = async (row: ClientOverviewRow) => {
+    setMsg(null)
+    try {
+      const server = await api.post<NewFleetNode>(`/admin/users/${row.user_id}/server`)
+      setIssued({ client: row.username, server })
+      refresh()
+    } catch (err) {
+      setMsg({ kind: "err", text: err instanceof ApiError ? err.message : "Failed to create the server." })
+    }
+  }
+
+  const newSecret = async (row: ClientOverviewRow) => {
+    if (
+      !window.confirm(
+        `Issue a new secret for ${row.username}'s server?\n\nThe old one stops working immediately and the server disconnects until you put the new secret in its .env.`,
+      )
+    ) {
+      return
+    }
+    setMsg(null)
+    try {
+      const server = await api.post<NewFleetNode>(`/admin/users/${row.user_id}/server/secret`)
+      setIssued({ client: row.username, server })
+      refresh()
+    } catch (err) {
+      setMsg({ kind: "err", text: err instanceof ApiError ? err.message : "Failed to issue a new secret." })
     }
   }
 
@@ -113,6 +159,10 @@ export default function ClientsTab() {
           client resets their own password by OTP if they forget it — without
           one, only you can reset it for them.
         </p>
+        <p className="mt-1 text-[11px] text-slate-500">
+          🖥️ Every client gets their own server, created with the account — one
+          client, one server. Their bot runs only there, from its static IP.
+        </p>
         <button
           type="submit"
           disabled={busy}
@@ -126,6 +176,14 @@ export default function ClientsTab() {
           </p>
         )}
       </form>
+
+      {issued && (
+        <ServerSecretBox
+          server={issued.server}
+          forClient={issued.client}
+          onDone={() => setIssued(null)}
+        />
+      )}
 
       <div>
         <h3 className="mb-2 text-sm font-semibold text-slate-200">Clients</h3>
@@ -143,7 +201,32 @@ export default function ClientsTab() {
             {
               key: "running",
               header: "Bot",
-              render: (r) => (r.running ? `🟢 Running (${r.environment})` : "⏸️ Stopped"),
+              render: (r) =>
+                r.running
+                  ? `🟢 Running (${r.environment})${r.node ? ` · ${r.node}` : ""}`
+                  : "⏸️ Stopped",
+            },
+            {
+              key: "server",
+              header: "Server",
+              render: (r) =>
+                r.server ? (
+                  <div>
+                    <div className="text-slate-200">{r.server.name}</div>
+                    <div className="text-[10px] text-slate-500">
+                      {r.server.connected ? (
+                        <span className="text-emerald-400">🟢 connected</span>
+                      ) : r.server.last_connected_at ? (
+                        "⚪ offline"
+                      ) : (
+                        <span className="text-amber-400">⚪ never connected — set it up</span>
+                      )}{" "}
+                      · {r.server.node_id}
+                    </div>
+                  </div>
+                ) : (
+                  <span className="text-amber-400">⚠️ none — can't trade</span>
+                ),
             },
             {
               key: "email",
@@ -186,6 +269,22 @@ export default function ClientsTab() {
                   >
                     📊 Stats
                   </button>
+                  {r.server ? (
+                    <button
+                      onClick={() => newSecret(r)}
+                      title="Issue a new server secret (e.g. the old one was lost)"
+                      className="rounded bg-slate-700 px-2 py-0.5 text-xs text-slate-100 hover:bg-slate-600"
+                    >
+                      🔑 New secret
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => createServer(r)}
+                      className="rounded bg-amber-700 px-2 py-0.5 text-xs text-white hover:bg-amber-600"
+                    >
+                      🖥️ Create server
+                    </button>
+                  )}
                   <button
                     onClick={() => {
                       setEmailTarget(r)

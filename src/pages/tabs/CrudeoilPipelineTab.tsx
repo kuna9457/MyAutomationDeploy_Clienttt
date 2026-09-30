@@ -92,7 +92,10 @@ export default function CrudeoilPipelineTab() {
   const [atrStop, setAtrStop] = useState(1.25)
   const [targetR, setTargetR] = useState(2.0)
   const [trail, setTrail] = useState(1.5)
-  const [beAtR, setBeAtR] = useState(1.0)
+  // Read-only for now: beAtR is sent as breakeven_at_r below, but nothing
+  // sets it, and tsconfig.app.json has noUnusedLocals so the unused setter
+  // failed the build. Restore the setter when a control is wired to it.
+  const [beAtR] = useState(1.0)
   const [riskPct, setRiskPct] = useState(1.0)
 
   // lib/api is a fetch wrapper: api.get<T>() resolves to T directly, NOT to

@@ -65,6 +65,12 @@ export default function Sidebar({ status, onChanged }: Props) {
   // broker at whatever the auction prints, or becomes an unfunded delivery.
   const [squareOffTime, setSquareOffTime] = useState("")
   const [squareOffEnabled, setSquareOffEnabled] = useState(true)
+  // How an OPEN position is managed after its first target. "strategy" — the
+  // default — leaves whatever the chosen strategy declares alone, so this is
+  // inert until it is changed. Backtest a style first: the Backtesting tab
+  // offers the identical four, and the two share one exit state-machine.
+  const [exitStyle, setExitStyle] = useState("strategy")
+  const [trailAtrMult, setTrailAtrMult] = useState(0)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [brokerStatus, setBrokerStatus] = useState<Record<string, BrokerStatusEntry>>({})
@@ -159,6 +165,8 @@ export default function Sidebar({ status, onChanged }: Props) {
     setMinScore(botConfig?.by_mode?.[mode]?.min_score ?? 0)
     setSquareOffTime(botConfig?.by_mode?.[mode]?.square_off_time ?? "")
     setSquareOffEnabled(botConfig?.by_mode?.[mode]?.square_off_enabled ?? true)
+    setExitStyle(botConfig?.by_mode?.[mode]?.exit_style || "strategy")
+    setTrailAtrMult(botConfig?.by_mode?.[mode]?.trail_atr_mult ?? 0)
     setMcxLots(botConfig?.by_mode?.[mode]?.mcx_lots ?? {})
   }, [mode, botConfig])
 
@@ -281,6 +289,8 @@ export default function Sidebar({ status, onChanged }: Props) {
         min_score: minScore,
         square_off_time: squareOffTime,
         square_off_enabled: squareOffEnabled,
+        exit_style: exitStyle,
+        trail_atr_mult: trailAtrMult,
       })
       setClientStart(res?.clients ?? null)
       onChanged()
@@ -408,6 +418,8 @@ export default function Sidebar({ status, onChanged }: Props) {
         min_score: minScore,
         square_off_time: squareOffTime,
         square_off_enabled: squareOffEnabled,
+        exit_style: exitStyle,
+        trail_atr_mult: trailAtrMult,
       })
       setBotConfig(updated)
       setConfigMsg(`Saved — clients who pick ${mode} now trade this.`)
@@ -960,6 +972,45 @@ export default function Sidebar({ status, onChanged }: Props) {
             still included when you start or save.
           </p>
         )}
+      </section>
+
+      <section>
+        <div className="mb-1 font-medium text-slate-300">🎯 Exit Management ({mode})</div>
+        <select
+          className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-slate-100"
+          value={exitStyle}
+          disabled={running}
+          onChange={(e) => setExitStyle(e.target.value)}
+        >
+          <option value="strategy">Strategy's own (default)</option>
+          <option value="fixed">Fixed stop / target — no management</option>
+          <option value="trail_full">Trail the full position from entry</option>
+          <option value="partial_trail">Book half at 1R, trail the runner</option>
+          <option value="partial_lock">Book half at 1R, lock TP1, hold for TP2</option>
+          <option value="partial_ladder">Book half at 1R, break-even, lock TP1 at midpoint</option>
+        </select>
+        {exitStyle !== "strategy" && exitStyle !== "fixed" && (
+          <input
+            type="number"
+            min={0}
+            max={10}
+            step={0.25}
+            value={trailAtrMult}
+            disabled={running}
+            onChange={(e) => setTrailAtrMult(Number(e.target.value))}
+            className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1 text-slate-100"
+            placeholder="Trail ×ATR (0 = strategy's own)"
+          />
+        )}
+        <p className="mt-1 text-[11px] text-slate-500">
+          Only what happens AFTER the first target. The entry, the ATR stop and
+          the position size are untouched — quantity is fixed at entry and the
+          trail only ever moves the stop toward price, so this can shrink risk
+          per trade, never widen it. The managed styles move the stop to
+          break-even + 20 bps, sized to clear a runner's real round-trip cost
+          on any price. Test a style on the Backtesting tab first: it offers
+          the identical four and runs the same exit code.
+        </p>
       </section>
 
       {mode !== "Swing" && (

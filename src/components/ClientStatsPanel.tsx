@@ -68,7 +68,9 @@ export default function ClientStatsPanel({
           📊 {displayName}{" "}
           <span className="font-normal text-slate-500">({username})</span>
           {stats?.running && (
-            <span className="ml-2 text-xs text-emerald-400">🟢 bot running</span>
+            <span className="ml-2 text-xs text-emerald-400">
+              🟢 bot running{stats.node ? ` on ${stats.node}` : ""}
+            </span>
           )}
         </h3>
         <div className="flex items-center gap-2">

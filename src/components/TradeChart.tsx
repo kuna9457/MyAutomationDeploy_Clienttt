@@ -114,7 +114,25 @@ function positionBoxes(
   }
 }
 
-export default function TradeChart({ data }: { data: ChartCandles }) {
+/** A time window to zoom to, in the same UNIX seconds the candles use.
+ *  Null = show everything.
+ *
+ *  Six months of 15-minute bars is ~3,000 candles; fitContent() on that is a
+ *  wall of pixels in which no individual trade is legible. Being able to jump
+ *  to one trade is the difference between a chart you can look at and a chart
+ *  you can actually diagnose with. */
+export interface ChartFocus {
+  from: number
+  to: number
+}
+
+export default function TradeChart({
+  data,
+  focus = null,
+}: {
+  data: ChartCandles
+  focus?: ChartFocus | null
+}) {
   const boxRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null)
@@ -214,6 +232,27 @@ export default function TradeChart({ data }: { data: ChartCandles }) {
       seriesRef.current = null
     }
   }, [data])
+
+  // Declared AFTER the effect that builds the chart, so chartRef is populated
+  // by the time this runs on a render that changes both data and focus.
+  useEffect(() => {
+    const chart = chartRef.current
+    if (!chart) return
+    if (!focus) {
+      chart.timeScale().fitContent()
+      return
+    }
+    try {
+      chart.timeScale().setVisibleRange({
+        from: focus.from as Time,
+        to: focus.to as Time,
+      })
+    } catch {
+      // A window that falls outside the loaded candles (a trade on the very
+      // first or last bar, say) throws rather than clamping. Leaving the view
+      // where it was beats blanking the chart.
+    }
+  }, [focus, data])
 
   return (
     <div>
