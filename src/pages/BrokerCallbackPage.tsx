@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import Brand from "../components/Brand"
-import { BASE_URL } from "../lib/api"
+import { apiBase } from "../lib/api"
 import { useAuth } from "../lib/auth"
 import { ThemeToggle } from "../lib/theme"
 
@@ -55,7 +55,9 @@ export default function BrokerCallbackPage() {
     const bodyKey = auth.broker === "Upstox" ? "code" : "request_token"
     setPhase("working")
     try {
-      const res = await fetch(`${BASE_URL}/broker/${path}/exchange`, {
+      // The server this user logged into — their own, whose IP their broker
+      // app is locked to. The broker login must be completed THERE.
+      const res = await fetch(`${apiBase()}/broker/${path}/exchange`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
