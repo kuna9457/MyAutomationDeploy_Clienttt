@@ -149,7 +149,15 @@ async function loginAcrossServers(form: URLSearchParams): Promise<LoginResult> {
   const attempts = await Promise.allSettled(
     API_BASES.map(async (base) => {
       const res = await fetchWithin(`${base}/auth/login`, { method: "POST", body: form })
-      if (!res.ok) throw new ApiError(res.status, res.status === 401 ? "Invalid username or password." : res.statusText)
+      if (!res.ok) {
+        let detail = res.status === 401 ? "Invalid username or password." : res.statusText
+        try {
+          detail = (await res.json()).detail || detail
+        } catch {
+          /* not JSON — keep the default */
+        }
+        throw new ApiError(res.status, detail)
+      }
       return { base, result: (await res.json()) as LoginResult }
     }),
   )
@@ -157,6 +165,11 @@ async function loginAcrossServers(form: URLSearchParams): Promise<LoginResult> {
 
   if (accepted.length === 0) {
     const rejected = attempts.flatMap((a) => (a.status === "rejected" ? [a.reason] : []))
+    // A 403 means the password was RIGHT but every server that accepted it
+    // refused this account (e.g. the admin, when only client servers are
+    // listed) — its message says what to fix, so it wins over the others.
+    const refused = rejected.find((r) => r instanceof ApiError && r.status === 403)
+    if (refused) throw refused
     const wrongPassword = rejected.some((r) => r instanceof ApiError && r.status === 401)
     throw new ApiError(
       wrongPassword ? 401 : 503,

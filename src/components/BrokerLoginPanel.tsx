@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { api, ApiError } from "../lib/api"
+import { api, ApiError, apiBase } from "../lib/api"
 
 interface UpstoxLoginUrl {
   login_url: string
@@ -38,6 +38,11 @@ export default function BrokerLoginPanel() {
 
 function UpstoxPanel() {
   const [loginInfo, setLoginInfo] = useState<UpstoxLoginUrl | null>(null)
+  // WHY the login link could not be built, in the server's own words. This
+  // used to be a fixed "add the keys to .env" for ANY failure — which sent
+  // people hunting for keys that were present when the real problem was that
+  // the panel was talking to a different server.
+  const [loginError, setLoginError] = useState<string | null>(null)
   const [status, setStatus] = useState<TokenStatus | null>(null)
   const [pasted, setPasted] = useState("")
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null)
@@ -47,7 +52,13 @@ function UpstoxPanel() {
     api.get<TokenStatus>("/broker/upstox/token-status").then(setStatus).catch(() => {})
 
   useEffect(() => {
-    api.get<UpstoxLoginUrl>("/broker/upstox/login-url").then(setLoginInfo).catch(() => setLoginInfo(null))
+    api
+      .get<UpstoxLoginUrl>("/broker/upstox/login-url")
+      .then(setLoginInfo)
+      .catch((err) => {
+        setLoginInfo(null)
+        setLoginError(err instanceof ApiError ? err.message : "Could not load the Upstox login link.")
+      })
     refreshStatus()
   }, [])
 
@@ -106,10 +117,13 @@ function UpstoxPanel() {
               3) Exchange &amp; Save Token
             </button>
           </>
-        ) : (
+        ) : loginError ? (
           <p className="text-xs text-amber-400">
-            Add UPSTOX_LIVE_API_KEY / UPSTOX_LIVE_SECRET to .env to refresh from here.
+            Can't refresh from here: {loginError}
+            <span className="mt-0.5 block text-[11px] text-slate-500">Server: {apiBase()}</span>
           </p>
+        ) : (
+          <p className="text-xs text-slate-500">Loading…</p>
         )}
         {msg && (
           <p className={`text-xs ${msg.kind === "ok" ? "text-emerald-400" : "text-red-400"}`}>
@@ -123,6 +137,7 @@ function UpstoxPanel() {
 
 function ZerodhaPanel() {
   const [loginUrl, setLoginUrl] = useState<string | null>(null)
+  const [loginError, setLoginError] = useState<string | null>(null)
   const [status, setStatus] = useState<TokenStatus | null>(null)
   const [pasted, setPasted] = useState("")
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null)
@@ -135,7 +150,10 @@ function ZerodhaPanel() {
     api
       .get<{ login_url: string }>("/broker/zerodha/login-url")
       .then((r) => setLoginUrl(r.login_url))
-      .catch(() => setLoginUrl(null))
+      .catch((err) => {
+        setLoginUrl(null)
+        setLoginError(err instanceof ApiError ? err.message : "Could not load the Zerodha login link.")
+      })
     refreshStatus()
   }, [])
 
@@ -191,10 +209,13 @@ function ZerodhaPanel() {
               3) Exchange &amp; Save Token
             </button>
           </>
-        ) : (
+        ) : loginError ? (
           <p className="text-xs text-amber-400">
-            Add ZERODHA_API_KEY / ZERODHA_API_SECRET to .env to refresh from here.
+            Can't refresh from here: {loginError}
+            <span className="mt-0.5 block text-[11px] text-slate-500">Server: {apiBase()}</span>
           </p>
+        ) : (
+          <p className="text-xs text-slate-500">Loading…</p>
         )}
         {msg && (
           <p className={`text-xs ${msg.kind === "ok" ? "text-emerald-400" : "text-red-400"}`}>
