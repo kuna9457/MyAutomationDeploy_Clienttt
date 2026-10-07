@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react"
 import { api, ApiError } from "../lib/api"
+import AccountSettings from "./AccountSettings"
 import ClientBrokerConnect from "./ClientBrokerConnect"
 import ClientBrokerCredentials from "./ClientBrokerCredentials"
 import NumberInput from "./NumberInput"
@@ -252,6 +253,8 @@ export default function ClientSidebar({ status, onChanged }: Props) {
         </button>
       </div>
       {error && <p className="text-xs text-red-400">{error}</p>}
+
+      <AccountSettings />
     </aside>
   )
 }
