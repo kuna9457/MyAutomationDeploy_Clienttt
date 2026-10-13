@@ -12,12 +12,14 @@ import LiveDashboardTab from "./tabs/LiveDashboardTab"
 import HoldingsTab from "./tabs/HoldingsTab"
 import ActivityTab from "./tabs/ActivityTab"
 import TradeLogTab from "./tabs/TradeLogTab"
+import ClientCommissionTab from "./tabs/ClientCommissionTab"
 
 const TABS = [
   { key: "dashboard", label: "🖥️ Live Dashboard" },
   { key: "holdings", label: "📌 Holdings" },
   { key: "activity", label: "📝 Activity Log" },
   { key: "trades", label: "📒 Trade Log & Analytics" },
+  { key: "commission", label: "💰 Commission" },
 ] as const
 
 type TabKey = (typeof TABS)[number]["key"]
@@ -86,6 +88,7 @@ export default function ClientDashboardPage() {
           {tab === "holdings" && <HoldingsTab status={status} onChanged={refresh} />}
           {tab === "activity" && <ActivityTab status={status} showStrategy={false} />}
           {tab === "trades" && <TradeLogTab showStrategy={false} />}
+          {tab === "commission" && <ClientCommissionTab />}
         </main>
       </div>
     </div>

@@ -20,6 +20,8 @@ import TradeChartsTab from "./tabs/TradeChartsTab"
 import ClientsTab from "./tabs/ClientsTab"
 import BulkBacktestTab from "./tabs/BulkBacktestTab"
 import BroadcastTab from "./tabs/BroadcastTab"
+import TelegramTab from "./tabs/TelegramTab"
+import CommissionTab from "./tabs/CommissionTab"
 
 const TABS = [
   { key: "dashboard", label: "🖥️ Live Dashboard" },
@@ -34,6 +36,8 @@ const TABS = [
   { key: "auditor", label: "🧠 AI Auditor" },
   { key: "clients", label: "👥 Clients" },
   { key: "broadcast", label: "📡 Broadcast" },
+  { key: "telegram", label: "📣 Telegram" },
+  { key: "commission", label: "💰 Commission" },
 ] as const
 
 type TabKey = (typeof TABS)[number]["key"]
@@ -115,6 +119,8 @@ export default function DashboardPage() {
             {tab === "auditor" && <AuditorTab />}
             {tab === "clients" && <ClientsTab />}
             {tab === "broadcast" && <BroadcastTab />}
+            {tab === "telegram" && <TelegramTab />}
+            {tab === "commission" && <CommissionTab />}
           </ErrorBoundary>
         </main>
       </div>

@@ -48,7 +48,7 @@ export default function ClientsTab() {
           ? { kind: "err", text: `${res.server_error} Use “Create server” on their row.` }
           : {
               kind: "ok",
-              text: `Created client '${username}' and their server. Set up the server with the lines below, then give the client their login address, username and password — they can reset the password themselves via ${email}.`,
+              text: `Created client '${username}'. They can log in and paper trade right away. For Live trading, set up their server with the lines below first — they can reset their password themselves via ${email}.`,
             },
       )
       setUsername("")
@@ -161,7 +161,9 @@ export default function ClientsTab() {
         </p>
         <p className="mt-1 text-[11px] text-slate-500">
           🖥️ Every client gets their own server, created with the account — one
-          client, one server. Their bot runs only there, from its static IP.
+          client, one server. Live trading runs only there, from its static IP.
+          Paper trading needs no server: it works from this login as soon as
+          the account exists.
         </p>
         <button
           type="submit"
