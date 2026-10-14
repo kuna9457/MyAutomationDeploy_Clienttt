@@ -101,6 +101,15 @@ export default function Sidebar({ status, onChanged }: Props) {
   // discarding the strategy the preset saved. Parking it here lets that effect
   // honour the preset's choice once the new mode's list has actually arrived.
   const pendingStrategyKey = useRef<string | null>(null)
+  // Which mode `strategies` was last fetched for, so restoring a running bot's
+  // strategy knows whether it can set it now or must park it for that fetch.
+  const strategiesMode = useRef<string | null>(null)
+  // The run (by its started_at) the panel was last restored from. A reload
+  // starts every control at its default; while a bot is running the panel
+  // must show what that bot is actually using, once per run, without then
+  // fighting the admin's edits on every status poll.
+  const restoredRun = useRef<string | null>(null)
+  const runCfg = status?.started ? status.run_config : undefined
 
   useEffect(() => {
     api.get<Instrument[]>("/config/instruments").then(setInstruments).catch(() => {})
@@ -141,10 +150,15 @@ export default function Sidebar({ status, onChanged }: Props) {
   }, [mode])
 
   useEffect(() => {
+    // A reply for a mode we've already left must not consume the pending
+    // strategy meant for the new mode, or overwrite its list.
+    let stale = false
     api
       .get<StrategyInfo[]>(`/config/strategies?mode=${mode}`)
       .then((list) => {
+        if (stale) return
         setStrategies(list)
+        strategiesMode.current = mode
         // A preset's strategy wins when it's still valid for this mode;
         // otherwise fall back to the mode's default, as before. Cleared either
         // way so a later plain mode switch behaves normally.
@@ -157,18 +171,65 @@ export default function Sidebar({ status, onChanged }: Props) {
         setStrategyKey(chosen ? chosen.key : "")
       })
       .catch(() => {})
+    return () => {
+      stale = true
+    }
   }, [mode])
 
   // Seed from what's saved for this mode, so the field shows what is actually
-  // in force rather than resetting to "inherit" on every mode switch.
+  // in force rather than resetting to "inherit" on every mode switch. When the
+  // bot is running in this mode, what it is running on wins over what's saved.
   useEffect(() => {
+    if (runCfg && runCfg.mode === mode) {
+      setMinScore(runCfg.min_score ?? 0)
+      setSquareOffTime(runCfg.square_off_time ?? "")
+      setSquareOffEnabled(runCfg.square_off_enabled ?? true)
+      const style = runCfg.exit_style || "strategy"
+      setExitStyle(style)
+      // The snapshot records the resolved trail; under "strategy" that is the
+      // strategy's own, not a choice made here, so the override stays 0.
+      setTrailAtrMult(style === "strategy" ? 0 : runCfg.trail_atr_mult ?? 0)
+      setMcxLots(runCfg.mcx_lots ?? {})
+      return
+    }
     setMinScore(botConfig?.by_mode?.[mode]?.min_score ?? 0)
     setSquareOffTime(botConfig?.by_mode?.[mode]?.square_off_time ?? "")
     setSquareOffEnabled(botConfig?.by_mode?.[mode]?.square_off_enabled ?? true)
     setExitStyle(botConfig?.by_mode?.[mode]?.exit_style || "strategy")
     setTrailAtrMult(botConfig?.by_mode?.[mode]?.trail_atr_mult ?? 0)
     setMcxLots(botConfig?.by_mode?.[mode]?.mcx_lots ?? {})
-  }, [mode, botConfig])
+    // Keyed on the run's start time, not the object: status is re-polled and
+    // a fresh object each time must not wipe the admin's in-progress edits.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, botConfig, runCfg?.started_at])
+
+  // Restore the selection a running bot was started with (see restoredRun).
+  // Waits for the instrument list, since segments are derived from it.
+  useEffect(() => {
+    if (!runCfg || instruments.length === 0) return
+    if (restoredRun.current === runCfg.started_at) return
+    restoredRun.current = runCfg.started_at
+    if (runCfg.environment === "Paper" || runCfg.environment === "Live")
+      setEnvironment(runCfg.environment)
+    if (BROKERS.includes(runCfg.broker)) setBroker(runCfg.broker)
+    if (runCfg.capital) setCapital(runCfg.capital)
+    const running = new Set(runCfg.instruments ?? [])
+    const segs = Array.from(
+      new Set(instruments.filter((i) => running.has(i.symbol)).map((i) => i.segment)),
+    )
+    if (segs.length > 0) setSegments(segs)
+    if (running.size > 0) setSymbols(Array.from(running))
+    const key = status?.strategy?.key
+    if ((MODES as readonly string[]).includes(runCfg.mode)) {
+      const runMode = runCfg.mode as (typeof MODES)[number]
+      if (key) {
+        if (runMode === mode && strategiesMode.current === mode) setStrategyKey(key)
+        else pendingStrategyKey.current = key
+      }
+      setMode(runMode)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runCfg?.started_at, instruments])
 
   // Every stock on the board, in board order, deduplicated across strategies.
   // Includes PAUSED groups on purpose: pausing a strategy should not hide its

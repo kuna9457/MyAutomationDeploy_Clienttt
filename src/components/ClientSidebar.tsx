@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { api, ApiError } from "../lib/api"
 import AccountSettings from "./AccountSettings"
 import ClientBrokerConnect from "./ClientBrokerConnect"
@@ -34,6 +34,22 @@ export default function ClientSidebar({ status, onChanged }: Props) {
     api.get<RiskLimits>("/risk/limits").then(setRiskLimits).catch(() => {})
     api.get<ClientModeInfo[]>("/config/client-modes").then(setModes).catch(() => {})
   }, [])
+
+  // A reload starts every control at its default; while the bot is running,
+  // show what it was started with instead. Once per run (keyed on its start
+  // time), so a status poll never overwrites what the client is typing.
+  const runCfg = status?.started ? status.run_config : undefined
+  const restoredRun = useRef<string | null>(null)
+  useEffect(() => {
+    if (!runCfg || restoredRun.current === runCfg.started_at) return
+    restoredRun.current = runCfg.started_at
+    if (runCfg.environment === "Paper" || runCfg.environment === "Live")
+      setEnvironment(runCfg.environment)
+    const b = CLIENT_LIVE_BROKERS.find((x) => x === runCfg.broker)
+    if (b) setBroker(b)
+    if (runCfg.capital) setCapital(runCfg.capital)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runCfg?.started_at])
 
   const running = !!status?.running
   // Admin configures exactly one; the server resolves it either way.

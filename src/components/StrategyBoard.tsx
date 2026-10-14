@@ -8,9 +8,12 @@ import type { Instrument, StrategyGroup, StrategyInfo } from "../lib/types"
  *  one POSITION per stock can be open at a time; whichever strategy signals
  *  first takes it and the others wait for it to close (capital_ledger.py).
  *
- *  Uses the native HTML5 drag API rather than a library: the whole interaction
- *  is "drag a chip onto a card", and every drop is also reachable by clicking
- *  the + / x buttons, so the board stays usable without a mouse drag.
+ *  Two ways to put stocks on a strategy, and they do the same thing:
+ *  - TAP: tap stocks in the palette to select them (several at once), then
+ *    "Add here" on a strategy. This is the one that works on a phone — touch
+ *    screens never fire the native HTML5 drag events.
+ *  - DRAG (mouse): drag a chip onto a card. Dragging a chip that is part of
+ *    the selection drops the whole selection.
  */
 export default function StrategyBoard({
   mode,
@@ -29,6 +32,8 @@ export default function StrategyBoard({
 }) {
   const [search, setSearch] = useState("")
   const [dragging, setDragging] = useState<string | null>(null)
+  // Tapped-but-not-yet-placed stocks, in tap order.
+  const [selected, setSelected] = useState<string[]>([])
   const [over, setOver] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
@@ -71,14 +76,20 @@ export default function StrategyBoard({
     }
   }
 
-  const addSymbol = (key: string, symbol: string) => {
-    const next = groups.map((g) =>
-      g.strategy_key === key && !g.symbols.includes(symbol)
-        ? { ...g, symbols: [...g.symbols, symbol] }
-        : g,
-    )
+  const addSymbols = (key: string, symbols: string[]) => {
+    const next = groups.map((g) => {
+      if (g.strategy_key !== key) return g
+      const fresh = symbols.filter((s) => !g.symbols.includes(s))
+      return fresh.length ? { ...g, symbols: [...g.symbols, ...fresh] } : g
+    })
+    setSelected([])
     save(next)
   }
+
+  const toggleSelected = (symbol: string) =>
+    setSelected((prev) =>
+      prev.includes(symbol) ? prev.filter((s) => s !== symbol) : [...prev, symbol],
+    )
 
   const removeSymbol = (key: string, symbol: string) =>
     save(
@@ -122,7 +133,8 @@ export default function StrategyBoard({
   return (
     <div className="space-y-3">
       <p className="text-xs text-slate-400">
-        Drag a stock onto a strategy to have that strategy trade it. The same
+        Tap stocks to select them, then tap <strong>Add here</strong> on a
+        strategy (or drag a stock onto it with a mouse). The same
         stock may sit on several strategies — only one trade in it runs at a
         time, and the others wait for it to close.
       </p>
@@ -132,15 +144,20 @@ export default function StrategyBoard({
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search stocks to drag…"
+          placeholder="Search stocks…"
           className="mb-2 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-100"
         />
         <div className="flex max-h-32 flex-wrap gap-1 overflow-y-auto">
           {matches.map((i) => {
             const n = usage.get(i.symbol) ?? 0
+            const picked = selected.includes(i.symbol)
             return (
-              <span
+              <button
+                type="button"
                 key={i.symbol}
+                disabled={lock}
+                aria-pressed={picked}
+                onClick={() => toggleSelected(i.symbol)}
                 draggable={!lock}
                 onDragStart={() => setDragging(i.symbol)}
                 onDragEnd={() => {
@@ -148,21 +165,38 @@ export default function StrategyBoard({
                   setOver(null)
                 }}
                 title={n > 0 ? `Already on ${n} strategy/strategies` : undefined}
-                className={`cursor-grab select-none rounded border px-1.5 py-0.5 text-[11px] ${
-                  n > 0
-                    ? "border-sky-800 bg-sky-950 text-sky-300"
-                    : "border-slate-700 bg-slate-800 text-slate-300"
+                className={`cursor-pointer select-none rounded border px-2 py-1 text-xs sm:px-1.5 sm:py-0.5 sm:text-[11px] ${
+                  picked
+                    ? "border-emerald-500 bg-emerald-900 text-emerald-100"
+                    : n > 0
+                      ? "border-sky-800 bg-sky-950 text-sky-300"
+                      : "border-slate-700 bg-slate-800 text-slate-300"
                 } ${dragging === i.symbol ? "opacity-40" : ""}`}
               >
+                {picked && "✓ "}
                 {i.symbol}
                 {n > 0 && <span className="ml-1 text-sky-500">·{n}</span>}
-              </span>
+              </button>
             )
           })}
           {matches.length === 0 && (
             <span className="text-[11px] text-slate-500">No match.</span>
           )}
         </div>
+        {selected.length > 0 && (
+          <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-emerald-300">
+            <span>
+              {selected.length} selected — tap <strong>Add here</strong> on a strategy.
+            </span>
+            <button
+              type="button"
+              onClick={() => setSelected([])}
+              className="rounded bg-slate-800 px-2 py-1 text-slate-300 hover:bg-slate-700"
+            >
+              Clear
+            </button>
+          </div>
+        )}
       </div>
 
       {/* -- one drop zone per strategy ------------------------------------ */}
@@ -181,7 +215,11 @@ export default function StrategyBoard({
               onDrop={(e) => {
                 e.preventDefault()
                 setOver(null)
-                if (dragging) addSymbol(g.strategy_key, dragging)
+                if (dragging)
+                  addSymbols(
+                    g.strategy_key,
+                    selected.includes(dragging) ? selected : [dragging],
+                  )
                 setDragging(null)
               }}
               className={`rounded-lg border p-2 transition-colors ${
@@ -202,7 +240,16 @@ export default function StrategyBoard({
                     {!g.enabled && " · paused"}
                   </div>
                 </div>
-                <div className="flex shrink-0 gap-1">
+                <div className="flex shrink-0 flex-wrap justify-end gap-1">
+                  {selected.length > 0 && (
+                    <button
+                      onClick={() => addSymbols(g.strategy_key, selected)}
+                      disabled={lock}
+                      className="rounded bg-emerald-700 px-2 py-1 text-xs font-medium text-white hover:bg-emerald-600 sm:px-1.5 sm:py-0.5 sm:text-[11px]"
+                    >
+                      + Add here ({selected.length})
+                    </button>
+                  )}
                   <button
                     onClick={() => toggleGroup(g.strategy_key)}
                     disabled={lock}
@@ -230,7 +277,7 @@ export default function StrategyBoard({
                     <button
                       onClick={() => removeSymbol(g.strategy_key, s)}
                       disabled={lock}
-                      className="text-slate-500 hover:text-red-400"
+                      className="px-1 text-sm leading-none text-slate-500 hover:text-red-400 sm:px-0 sm:text-[11px]"
                       aria-label={`Remove ${s}`}
                     >
                       ×
@@ -239,7 +286,7 @@ export default function StrategyBoard({
                 ))}
                 {g.symbols.length === 0 && (
                   <span className="px-1 text-[11px] text-slate-600">
-                    Drop stocks here
+                    {selected.length > 0 ? "Tap “Add here” above" : "Select stocks above, or drop them here"}
                   </span>
                 )}
               </div>
@@ -250,7 +297,7 @@ export default function StrategyBoard({
 
       {groups.length === 0 && (
         <p className="rounded border border-dashed border-slate-700 p-3 text-center text-[11px] text-slate-500">
-          No strategy board yet. Add a strategy below and drag stocks onto it.
+          No strategy board yet. Add a strategy below, then put stocks on it.
           While this is empty the bot runs the single strategy picked above,
           exactly as before.
         </p>
