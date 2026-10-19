@@ -3,6 +3,7 @@ import DataTable from "../../components/DataTable"
 import UpiQr from "../../components/UpiQr"
 import { api, ApiError } from "../../lib/api"
 import {
+  paidOn,
   rupees,
   STATUS_LABEL,
   weekLabel,
@@ -207,6 +208,39 @@ export default function CommissionTab() {
                   </button>
                 </div>
               ),
+            },
+          ]}
+        />
+      </div>
+
+      <div>
+        <h3 className="mb-2 text-sm font-semibold text-slate-200">
+          Payment history ({data.payments.length})
+        </h3>
+        <DataTable
+          rows={data.payments}
+          rowKey={(r) => r.invoice_id}
+          empty="No payments yet."
+          columns={[
+            { key: "paid", header: "Paid on", render: (r) => paidOn(r.paid_at || r.verified_at) },
+            { key: "name", header: "Client", render: (r) => `${r.display_name} (${r.username})` },
+            { key: "week", header: "Week", render: (r) => weekLabel(r.week_start, r.week_end) },
+            { key: "profit", header: "Profit", render: (r) => rupees(r.profit) },
+            { key: "pct", header: "Rate", render: (r) => `${r.pct}%` },
+            { key: "amount", header: "Amount", render: (r) => rupees(r.amount) },
+            { key: "ref", header: "UPI reference", render: (r) => r.paid_ref || "—" },
+            { key: "status", header: "Status", render: (r) => STATUS_LABEL[r.status] },
+            {
+              key: "actions",
+              header: "Actions",
+              render: (r) =>
+                r.status === "paid" ? (
+                  <button className={small} onClick={() => setStatus(r, "verified")}>
+                    ✅ Received
+                  </button>
+                ) : (
+                  <span className="text-xs text-slate-500">verified {paidOn(r.verified_at)}</span>
+                ),
             },
           ]}
         />

@@ -54,7 +54,15 @@ export interface CommissionOverview {
   ledger_shared: boolean
   totals: { total_due: number; total_paid: number; total_unverified: number }
   clients: (CommissionStatement & { display_name: string; account_status: string })[]
+  /** Every paid / verified invoice across clients, newest first. */
+  payments: (CommissionInvoice & { display_name: string })[]
 }
+
+/** "19 Oct 2026, 3:42 pm" in the viewer's local time, or "—". */
+export const paidOn = (iso: string) =>
+  iso
+    ? new Date(iso).toLocaleString("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" })
+    : "—"
 
 export const rupees = (n: number) =>
   `₹${n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`

@@ -3,6 +3,7 @@ import DataTable from "../../components/DataTable"
 import UpiQr from "../../components/UpiQr"
 import { api, ApiError } from "../../lib/api"
 import {
+  paidOn,
   rupees,
   STATUS_LABEL,
   weekLabel,
@@ -25,6 +26,9 @@ export default function ClientCommissionTab() {
   }
 
   const due = data.invoices.filter((i) => i.status === "due")
+  const payments = data.invoices
+    .filter((i) => i.status === "paid" || i.status === "verified")
+    .sort((a, b) => (b.paid_at || b.verified_at).localeCompare(a.paid_at || a.verified_at))
   const week = data.current_week
 
   const markPaid = async (inv: CommissionInvoice) => {
@@ -41,7 +45,7 @@ export default function ClientCommissionTab() {
       await api.post(`/commission/me/invoices/${inv.week_start}/paid`, {
         reference: refs[inv.week_start] ?? "",
       })
-      setMsg({ kind: "ok", text: `Marked ${rupees(inv.amount)} as paid. Thank you.` })
+      setMsg({ kind: "ok", text: `Marked ${rupees(inv.amount)} as paid. Thank you — a confirmation email is on its way.` })
       refresh()
     } catch (err) {
       setMsg({ kind: "err", text: err instanceof ApiError ? err.message : "Could not mark it paid." })
@@ -120,6 +124,29 @@ export default function ClientCommissionTab() {
           </div>
         ))
       )}
+
+      <div>
+        <h3 className="mb-2 text-sm font-semibold text-slate-200">
+          Payments made · total {rupees(data.total_paid)}
+        </h3>
+        <DataTable
+          rows={payments}
+          rowKey={(r) => r.week_start}
+          empty="No payments yet."
+          columns={[
+            { key: "paid", header: "Paid on", render: (r) => paidOn(r.paid_at || r.verified_at) },
+            { key: "week", header: "For week", render: (r) => weekLabel(r.week_start, r.week_end) },
+            { key: "pct", header: "Rate", render: (r) => `${r.pct}%` },
+            { key: "amount", header: "Amount", render: (r) => rupees(r.amount) },
+            { key: "ref", header: "UPI reference", render: (r) => r.paid_ref || "—" },
+            {
+              key: "status",
+              header: "Status",
+              render: (r) => (r.status === "verified" ? "✅ Confirmed by WelthWest" : "🟢 Awaiting confirmation"),
+            },
+          ]}
+        />
+      </div>
 
       <div>
         <h3 className="mb-2 text-sm font-semibold text-slate-200">Weekly history</h3>

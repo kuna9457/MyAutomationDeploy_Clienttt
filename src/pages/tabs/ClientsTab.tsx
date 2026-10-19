@@ -23,6 +23,9 @@ export default function ClientsTab() {
   const [resetTarget, setResetTarget] = useState<ClientOverviewRow | null>(null)
   const [newPassword, setNewPassword] = useState("")
   const [statsFor, setStatsFor] = useState<ClientOverviewRow | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<ClientOverviewRow | null>(null)
+  const [deleteConfirm, setDeleteConfirm] = useState("")
+  const [deleteData, setDeleteData] = useState(true)
   // The server credentials just issued (at creation, or a new secret) — shown
   // ONCE, because the hub keeps only a hash of the secret.
   const [issued, setIssued] = useState<{ client: string; server: NewFleetNode } | null>(null)
@@ -96,6 +99,31 @@ export default function ClientsTab() {
     const next = row.status === "active" ? "disabled" : "active"
     await api.put(`/admin/users/${row.user_id}/status`, { status: next })
     refresh()
+  }
+
+  const deleteClient = async () => {
+    if (!deleteTarget || deleteConfirm !== deleteTarget.username) return
+    setBusy(true)
+    setMsg(null)
+    try {
+      const res = await api.del<{ trades_removed: number; invoices_removed: number; server_removed: boolean }>(
+        `/admin/users/${deleteTarget.user_id}?delete_data=${deleteData}`,
+      )
+      setMsg({
+        kind: "ok",
+        text: `Deleted '${deleteTarget.username}'${
+          deleteData ? ` — ${res.trades_removed} trades and ${res.invoices_removed} invoices removed` : ""
+        }${res.server_removed ? ", server removed" : ""}.`,
+      })
+      if (statsFor?.user_id === deleteTarget.user_id) setStatsFor(null)
+      setDeleteTarget(null)
+      setDeleteConfirm("")
+      refresh()
+    } catch (err) {
+      setMsg({ kind: "err", text: err instanceof ApiError ? err.message : "Failed to delete the client." })
+    } finally {
+      setBusy(false)
+    }
   }
 
   const saveEmail = async () => {
@@ -308,6 +336,18 @@ export default function ClientsTab() {
                   >
                     Reset password
                   </button>
+                  {r.status !== "active" && (
+                    <button
+                      onClick={() => {
+                        setDeleteTarget(r)
+                        setDeleteConfirm("")
+                        setDeleteData(true)
+                      }}
+                      className="rounded bg-red-700 px-2 py-0.5 text-xs text-white hover:bg-red-600"
+                    >
+                      🗑️ Delete
+                    </button>
+                  )}
                 </div>
               ),
             },
@@ -346,6 +386,51 @@ export default function ClientsTab() {
               </button>
               <button
                 onClick={() => { setResetTarget(null); setNewPassword("") }}
+                className="flex-1 rounded-lg bg-slate-700 px-3 py-1.5 text-sm text-slate-100 hover:bg-slate-600"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {deleteTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-sm rounded-xl border border-red-900 bg-slate-900 p-5">
+            <h4 className="mb-1 text-sm font-semibold text-red-300">
+              Delete {deleteTarget.display_name} ({deleteTarget.username})?
+            </h4>
+            <p className="mb-3 text-[11px] text-slate-400">
+              This permanently removes the account, its saved broker keys and its server. It
+              cannot be undone. Refused while they have an open Live position.
+            </p>
+            <label className="mb-3 flex items-start gap-2 text-xs text-slate-300">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={deleteData}
+                onChange={(e) => setDeleteData(e.target.checked)}
+              />
+              Also delete all their Paper + Live trades and commission invoices (recommended for
+              test accounts; untick to keep the history)
+            </label>
+            <input
+              placeholder={`Type ${deleteTarget.username} to confirm`}
+              className="mb-3 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
+              value={deleteConfirm}
+              onChange={(e) => setDeleteConfirm(e.target.value)}
+            />
+            <div className="flex gap-2">
+              <button
+                onClick={deleteClient}
+                disabled={busy || deleteConfirm !== deleteTarget.username}
+                className="flex-1 rounded-lg bg-red-700 px-3 py-1.5 text-sm text-white hover:bg-red-600 disabled:opacity-50"
+              >
+                Delete permanently
+              </button>
+              <button
+                onClick={() => { setDeleteTarget(null); setDeleteConfirm("") }}
                 className="flex-1 rounded-lg bg-slate-700 px-3 py-1.5 text-sm text-slate-100 hover:bg-slate-600"
               >
                 Cancel

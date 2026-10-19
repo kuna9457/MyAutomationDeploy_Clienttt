@@ -525,11 +525,62 @@ export default function Sidebar({ status, onChanged }: Props) {
     }
   }
 
+  // LIVE: the account's real free balance is what "Total Capital" means, so it
+  // is read from the broker rather than typed. The admin then picks how much
+  // of it the bot may use in "Capital allocated today"; the engine sizes
+  // against min(total, allocated). Paper keeps the typed notional capital.
+  const [fundsState, setFundsState] = useState<{
+    loading: boolean
+    funds: number | null
+    error: string | null
+  }>({ loading: false, funds: null, error: null })
+
+  const fetchFunds = async () => {
+    setFundsState((s) => ({ ...s, loading: true, error: null }))
+    try {
+      const res = await api.get<{ available_funds: number | null }>(
+        `/broker/my-funds?broker=${encodeURIComponent(broker)}`,
+      )
+      const funds = res.available_funds
+      setFundsState({
+        loading: false,
+        funds,
+        error: funds === null ? `${broker} does not report an available balance.` : null,
+      })
+    } catch (err) {
+      setFundsState({
+        loading: false,
+        funds: null,
+        error: err instanceof ApiError ? err.message : "Could not fetch broker balance.",
+      })
+    }
+  }
+
+  useEffect(() => {
+    if (environment !== "Live") return
+    setFundsState({ loading: false, funds: null, error: null })
+    fetchFunds()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [environment, broker])
+
+  // Follow the broker balance into the capital sent at Start — but never
+  // rewrite it under a running bot, which shows what it was started with.
+  const liveFunds = environment === "Live" ? fundsState.funds : null
+  useEffect(() => {
+    if (liveFunds !== null && !status?.running) setCapital(Math.floor(liveFunds))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveFunds])
+
   const saveRisk = async () => {
     if (!riskLimits) return
     setBusy(true)
     try {
-      const updated = await api.put<RiskLimits>("/risk/limits", riskLimits)
+      // Never allocate more than the broker actually holds.
+      const body =
+        liveFunds !== null && riskLimits.capital_allocated > liveFunds
+          ? { ...riskLimits, capital_allocated: Math.floor(liveFunds) }
+          : riskLimits
+      const updated = await api.put<RiskLimits>("/risk/limits", body)
       setRiskLimits(updated)
     } finally {
       setBusy(false)
@@ -1116,21 +1167,53 @@ export default function Sidebar({ status, onChanged }: Props) {
       )}
 
       <section>
-        <div className="mb-1 font-medium text-slate-300">Total Capital (₹)</div>
-        <NumberInput
-          className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-slate-100"
-          value={capital}
-          min={10000}
-          step={10000}
-          onChange={setCapital}
-        />
+        <div className="mb-1 flex items-center justify-between font-medium text-slate-300">
+          <span>
+            Total Capital (₹){environment === "Live" ? " — broker balance" : ""}
+          </span>
+          {environment === "Live" && (
+            <button
+              onClick={fetchFunds}
+              disabled={fundsState.loading}
+              className="rounded bg-slate-700 px-2 py-0.5 text-xs text-slate-100 hover:bg-slate-600 disabled:opacity-50"
+            >
+              {fundsState.loading ? "…" : "Refresh"}
+            </button>
+          )}
+        </div>
+        {environment === "Live" && liveFunds !== null ? (
+          <p className="rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-lg font-semibold text-slate-100">
+            ₹{liveFunds.toLocaleString("en-IN")}
+          </p>
+        ) : (
+          <>
+            <NumberInput
+              className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-slate-100"
+              value={capital}
+              min={10000}
+              step={10000}
+              onChange={setCapital}
+            />
+            {environment === "Live" && (
+              <p className="mt-1 text-[11px] text-amber-400">
+                {fundsState.loading
+                  ? "Fetching broker balance…"
+                  : `${fundsState.error ?? "Broker balance not loaded."} Enter it manually.`}
+              </p>
+            )}
+          </>
+        )}
       </section>
 
       {environment === "Live" && riskLimits && (
         <section className="rounded-lg border border-slate-800 p-3">
           <div className="mb-2 font-medium text-slate-300">🛡️ Live Risk Controls</div>
           <RiskField
-            label="Capital allocated today (₹)"
+            label={
+              liveFunds !== null
+                ? `Capital allocated today (₹) — max ₹${Math.floor(liveFunds).toLocaleString("en-IN")}`
+                : "Capital allocated today (₹)"
+            }
             value={riskLimits.capital_allocated}
             onChange={(v) => setRiskLimits({ ...riskLimits, capital_allocated: v })}
           />
