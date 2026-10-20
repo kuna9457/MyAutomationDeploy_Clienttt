@@ -98,6 +98,10 @@ export default function TradeLogTab({
         </label>
       </div>
 
+      {env === "Live" && (
+        <BrokerSyncPanel isAdmin={showStrategy} onSynced={refreshTrades} />
+      )}
+
       {byCategory && byCategory.length > 0 && (
         <div>
           <h3 className="mb-2 text-sm font-semibold text-slate-200">
@@ -217,6 +221,124 @@ export default function TradeLogTab({
         </button>
         {resetMsg && <p className="mt-2 text-xs text-emerald-400">{resetMsg}</p>}
       </details>
+    </div>
+  )
+}
+
+type BrokerSync = {
+  synced?: boolean
+  ok?: boolean
+  reason?: string
+  day?: string
+  synced_at?: string
+  trades?: number
+  manual?: number
+  unresolved?: string[]
+  ledger_total?: number
+  broker_realised?: number
+  gap?: number
+  matches?: boolean
+}
+
+/** Live only: the trade log is rebuilt from the broker's own fills (Kite),
+ *  automatically every 15 minutes in market hours. This shows today's match
+ *  against Kite and lets the user re-sync on demand. */
+function BrokerSyncPanel({ isAdmin, onSynced }: { isAdmin: boolean; onSynced: () => void }) {
+  const { data: status, refresh } = usePolling<BrokerSync>(
+    () => api.get("/trades/broker-sync"),
+    null,
+    [],
+  )
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState<string | null>(null)
+
+  const syncMine = async () => {
+    setBusy(true)
+    setMsg(null)
+    try {
+      const r = await api.post<BrokerSync>("/trades/broker-sync")
+      setMsg(r.ok ? `Synced ${r.trades ?? 0} trade(s) from Kite.` : r.reason ?? "Sync failed.")
+      refresh()
+      onSynced()
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : "Sync failed.")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const syncAll = async () => {
+    setBusy(true)
+    setMsg(null)
+    try {
+      const r = await api.post<{
+        total: number
+        synced: string[]
+        skipped: { username: string; reason: string }[]
+      }>("/trades/broker-sync/all")
+      const skipped = r.skipped.map((s) => `${s.username}: ${s.reason}`).join(" · ")
+      setMsg(`Synced ${r.synced.length} of ${r.total} account(s).${skipped ? ` Skipped — ${skipped}` : ""}`)
+      refresh()
+      onSynced()
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : "Sync failed.")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const fmt = (n?: number) => `₹${(Number(n) || 0).toLocaleString("en-IN")}`
+
+  return (
+    <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold text-slate-200">🔄 Broker sync (Kite)</h3>
+          <p className="text-[11px] text-slate-500">
+            Live trades are rebuilt from your broker's own fills, so prices, quantities and
+            day-wise P&amp;L match Kite. Runs automatically every 15 min in market hours.
+            Kite only returns today's fills, so earlier days keep the bot's own record.
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <button
+            onClick={syncMine}
+            disabled={busy}
+            className="rounded-lg bg-indigo-700 px-3 py-1.5 text-xs text-white hover:bg-indigo-600 disabled:opacity-40"
+          >
+            {busy ? "Syncing…" : "Sync now"}
+          </button>
+          {isAdmin && (
+            <button
+              onClick={syncAll}
+              disabled={busy}
+              className="rounded-lg bg-slate-700 px-3 py-1.5 text-xs text-slate-100 hover:bg-slate-600 disabled:opacity-40"
+            >
+              Sync all accounts
+            </button>
+          )}
+        </div>
+      </div>
+      {status?.synced ? (
+        <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs text-slate-300">
+          <span>Today ({status.day})</span>
+          <span>Log: {fmt(status.ledger_total)}</span>
+          <span>Kite realised: {fmt(status.broker_realised)}</span>
+          <span className={status.matches ? "text-emerald-400" : "text-amber-400"}>
+            {status.matches ? "✓ matches Kite" : `gap ${fmt(status.gap)}`}
+          </span>
+          <span>{status.trades} trade(s){status.manual ? `, ${status.manual} placed outside the bot` : ""}</span>
+          {status.unresolved && status.unresolved.length > 0 && (
+            <span className="text-amber-400">
+              Still open / carried: {status.unresolved.join(", ")} (bot record kept until flat)
+            </span>
+          )}
+          <span className="text-slate-500">last sync {status.synced_at?.slice(11, 19)} UTC</span>
+        </div>
+      ) : (
+        <p className="mt-2 text-xs text-slate-500">Not synced yet today.</p>
+      )}
+      {msg && <p className="mt-2 text-xs text-slate-300">{msg}</p>}
     </div>
   )
 }
