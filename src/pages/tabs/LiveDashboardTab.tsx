@@ -54,7 +54,7 @@ export default function LiveDashboardTab({
 
       <RunConfigPanel cfg={status.run_config} />
 
-      {(status.groups?.length ?? 0) > 0 && (
+      {showStrategy && (status.groups?.length ?? 0) > 0 && (
         <div>
           <h3 className="mb-2 text-sm font-semibold text-slate-200">
             🧩 Strategies running
@@ -67,7 +67,7 @@ export default function LiveDashboardTab({
               {
                 key: "name",
                 header: "Strategy",
-                render: (r) => (showStrategy ? r.strategy_name : r.strategy_key),
+                render: (r) => r.strategy_name,
               },
               {
                 key: "state",
@@ -195,7 +195,9 @@ export default function LiveDashboardTab({
             { key: "date", header: "Date", render: (r) => r.Date },
             // Which edges ran that day. The split of the day's money between
             // them is the table below.
-            { key: "strats", header: "Strategies", render: (r) => r.Strategies || "—" },
+            ...(showStrategy
+              ? [{ key: "strats", header: "Strategies", render: (r: (typeof daily)[number]) => r.Strategies || "—" }]
+              : []),
             { key: "symbols", header: "Symbols", render: (r) => r.Symbols },
             { key: "trades", header: "Trades", render: (r) => r.Trades },
             { key: "closed", header: "Closed", render: (r) => r.Closed },
@@ -207,6 +209,7 @@ export default function LiveDashboardTab({
         />
       </div>
 
+      {showStrategy && (
       <div>
         <h3 className="mb-2 text-sm font-semibold text-slate-200">🎯 Strategy-wise PnL</h3>
         <p className="mb-2 text-xs text-slate-500">
@@ -229,7 +232,9 @@ export default function LiveDashboardTab({
           ]}
         />
       </div>
+      )}
 
+      {showStrategy && (
       <div>
         <h3 className="mb-2 text-sm font-semibold text-slate-200">
           🗓️ Day-wise PnL by Strategy
@@ -255,6 +260,7 @@ export default function LiveDashboardTab({
           ]}
         />
       </div>
+      )}
 
       <p className="text-xs text-slate-500">
         {status.running ? "🔄 Live — refreshing every few seconds" : "⏸️ Bot stopped."}
