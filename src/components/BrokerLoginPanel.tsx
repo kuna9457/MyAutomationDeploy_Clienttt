@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react"
 import { api, ApiError, apiBase } from "../lib/api"
+import KotakConnect from "./KotakConnect"
 
 interface UpstoxLoginUrl {
   login_url: string
@@ -31,6 +32,7 @@ export default function BrokerLoginPanel() {
     <section className="space-y-3">
       <UpstoxPanel />
       <ZerodhaPanel />
+      <KotakConnect />
       <DhanPanel />
     </section>
   )

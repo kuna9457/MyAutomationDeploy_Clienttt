@@ -3,10 +3,11 @@ import { api, ApiError } from "../lib/api"
 import AccountSettings from "./AccountSettings"
 import ClientBrokerConnect from "./ClientBrokerConnect"
 import ClientBrokerCredentials from "./ClientBrokerCredentials"
+import KotakConnect from "./KotakConnect"
 import NumberInput from "./NumberInput"
 import type { BotStatus, ClientModeInfo, RiskLimits } from "../lib/types"
 
-const CLIENT_LIVE_BROKERS = ["Upstox", "Zerodha"] as const
+const CLIENT_LIVE_BROKERS = ["Upstox", "Zerodha", "Kotak Neo"] as const
 
 interface Props {
   status: BotStatus | null
@@ -59,7 +60,7 @@ export default function ClientSidebar({ status, onChanged }: Props) {
     setFundsError(null)
     try {
       const res = await api.get<{ available_funds: number | null }>(
-        `/broker/my-funds?broker=${broker}`,
+        `/broker/my-funds?broker=${encodeURIComponent(broker)}`,
       )
       setFetchedFunds(res.available_funds)
     } catch (err) {
@@ -173,15 +174,22 @@ export default function ClientSidebar({ status, onChanged }: Props) {
             </select>
           </section>
 
-          <ClientBrokerCredentials
-            broker={broker}
-            onSaved={() => setCredentialsVersion((v) => v + 1)}
-          />
-          <ClientBrokerConnect
-            key={`${broker}-${credentialsVersion}`}
-            broker={broker}
-            onConnected={fetchFunds}
-          />
+          {broker === "Kotak Neo" ? (
+            // No OAuth app for Kotak: setup + TOTP/MPIN login in one panel.
+            <KotakConnect asClient onConnected={fetchFunds} />
+          ) : (
+            <>
+              <ClientBrokerCredentials
+                broker={broker}
+                onSaved={() => setCredentialsVersion((v) => v + 1)}
+              />
+              <ClientBrokerConnect
+                key={`${broker}-${credentialsVersion}`}
+                broker={broker}
+                onConnected={fetchFunds}
+              />
+            </>
+          )}
 
           <section className="rounded-lg border border-slate-800 p-3">
             <div className="mb-2 flex items-center justify-between">
