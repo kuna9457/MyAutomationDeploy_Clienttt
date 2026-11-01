@@ -6,7 +6,7 @@ interface Me {
   has_email: boolean
   reset_available: boolean
 }
-
+//sdsadmaskdm
 /**
  * A signed-in user's own login settings: the email their forgot-password code
  * goes to, and changing their password.
@@ -26,7 +26,7 @@ export default function AccountSettings() {
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
-    api.get<Me>("/account/me").then(setMe).catch(() => {})
+    api.get<Me>("/account/me").then(setMe).catch(() => { })
   }, [])
 
   const saveEmail = async (e: FormEvent) => {
