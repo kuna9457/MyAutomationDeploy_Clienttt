@@ -3,12 +3,15 @@ import DataTable from "../../components/DataTable"
 import UpiQr from "../../components/UpiQr"
 import { api, ApiError } from "../../lib/api"
 import {
+  dayLabel,
   paidOn,
+  periodLabel,
   rupees,
   STATUS_LABEL,
   weekLabel,
   type ClientCommission,
   type CommissionInvoice,
+  type ServiceInvoice,
 } from "../../lib/commissionTypes"
 import { usePolling } from "../../lib/usePolling"
 
@@ -30,6 +33,32 @@ export default function ClientCommissionTab() {
     .filter((i) => i.status === "paid" || i.status === "verified")
     .sort((a, b) => (b.paid_at || b.verified_at).localeCompare(a.paid_at || a.verified_at))
   const week = data.current_week
+  const svc = data.service
+  const svcDue = svc.invoices.filter((i) => i.status === "due")
+
+  const markServicePaid = async (inv: ServiceInvoice) => {
+    if (
+      !window.confirm(
+        `Mark ${rupees(inv.amount)} for ${periodLabel(inv.period_start, inv.period_end)} as paid?
+
+Only do this after the UPI payment has gone through.`,
+      )
+    ) {
+      return
+    }
+    const key = `svc:${inv.period_start}`
+    setBusy(key)
+    setMsg(null)
+    try {
+      await api.post(`/commission/me/service/${inv.period_start}/paid`, { reference: refs[key] ?? "" })
+      setMsg({ kind: "ok", text: `Marked ${rupees(inv.amount)} as paid. Thank you — a confirmation email is on its way.` })
+      refresh()
+    } catch (err) {
+      setMsg({ kind: "err", text: err instanceof ApiError ? err.message : "Could not mark it paid." })
+    } finally {
+      setBusy("")
+    }
+  }
 
   const markPaid = async (inv: CommissionInvoice) => {
     if (
@@ -59,7 +88,7 @@ export default function ClientCommissionTab() {
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {[
           ["Your commission rate", data.commission_pct > 0 ? `${data.commission_pct}% of weekly profit` : "Not set"],
-          ["Due now", rupees(data.total_due)],
+          ["Due now", rupees(data.total_due + svc.total_due)],
           ["This week's profit so far", rupees(week.profit)],
           ["Accruing this week", rupees(week.accrued)],
         ].map(([label, value]) => (
@@ -83,7 +112,7 @@ export default function ClientCommissionTab() {
 
       {due.length === 0 ? (
         <div className="rounded-lg border border-slate-800 p-4 text-sm text-slate-300">
-          ✅ Nothing to pay right now.
+          ✅ No commission due right now.
         </div>
       ) : (
         due.map((inv) => (
@@ -124,6 +153,85 @@ export default function ClientCommissionTab() {
           </div>
         ))
       )}
+
+      {svc.monthly_total > 0 || svc.invoices.length > 0 ? (
+        <div className="space-y-3 rounded-lg border border-slate-800 p-4">
+          <h3 className="text-sm font-semibold text-slate-200">🖥️ Monthly server &amp; maintenance</h3>
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            {[
+              ["Server", rupees(svc.server_fee)],
+              ["Maintenance", rupees(svc.maintenance_fee)],
+              ["Monthly total", rupees(svc.monthly_total)],
+              ["Next bill on", dayLabel(svc.next_bill_date)],
+            ].map(([label, value]) => (
+              <div key={label} className="rounded-lg border border-slate-800 p-3">
+                <div className="text-[11px] text-slate-500">{label}</div>
+                <div className="text-lg font-semibold text-slate-100">{value}</div>
+              </div>
+            ))}
+          </div>
+          <p className="text-xs text-slate-500">
+            Billed in advance every month from {dayLabel(svc.start_date)}. Each month's bill appears here on
+            its first day.
+          </p>
+          {svcDue.length === 0 ? (
+            <div className="text-sm text-slate-300">✅ No monthly charges due right now.</div>
+          ) : (
+            svcDue.map((inv) => {
+              const key = `svc:${inv.period_start}`
+              return (
+                <div
+                  key={key}
+                  className="flex flex-col gap-5 rounded-lg border border-amber-800 p-4 sm:flex-row sm:items-center"
+                >
+                  <UpiQr uri={inv.upi_uri} />
+                  <div className="min-w-0 flex-1 space-y-2">
+                    <div className="text-xs text-slate-400">{periodLabel(inv.period_start, inv.period_end)}</div>
+                    <div className="text-2xl font-semibold text-slate-100">{rupees(inv.amount)}</div>
+                    <div className="text-sm text-slate-300">
+                      Server {rupees(inv.server_fee)} + Maintenance {rupees(inv.maintenance_fee)}
+                    </div>
+                    <div className="text-xs break-all text-slate-400">
+                      Pay to <strong className="text-slate-200">{data.payee_name}</strong> · UPI ID{" "}
+                      <strong className="text-slate-200">{data.upi_id}</strong>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2 pt-1">
+                      <input
+                        placeholder="UPI reference no. (optional)"
+                        maxLength={40}
+                        className="rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
+                        value={refs[key] ?? ""}
+                        onChange={(e) => setRefs({ ...refs, [key]: e.target.value })}
+                      />
+                      <button
+                        disabled={busy === key}
+                        onClick={() => markServicePaid(inv)}
+                        className="rounded-lg bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
+                      >
+                        I've paid — mark as done
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )
+            })
+          )}
+          <DataTable
+            rows={svc.invoices}
+            rowKey={(r) => r.period_start}
+            empty="No monthly bills yet."
+            columns={[
+              { key: "period", header: "Month", render: (r) => periodLabel(r.period_start, r.period_end) },
+              { key: "server", header: "Server", render: (r) => rupees(r.server_fee) },
+              { key: "maint", header: "Maintenance", render: (r) => rupees(r.maintenance_fee) },
+              { key: "amount", header: "Total", render: (r) => rupees(r.amount) },
+              { key: "status", header: "Status", render: (r) => STATUS_LABEL[r.status] },
+              { key: "paid", header: "Paid on", render: (r) => paidOn(r.paid_at || r.verified_at) },
+              { key: "ref", header: "Reference", render: (r) => r.paid_ref || "—" },
+            ]}
+          />
+        </div>
+      ) : null}
 
       <div>
         <h3 className="mb-2 text-sm font-semibold text-slate-200">

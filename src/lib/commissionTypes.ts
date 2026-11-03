@@ -18,6 +18,36 @@ export interface CommissionInvoice {
   upi_uri: string
 }
 
+/** One monthly server + maintenance invoice (billed in advance). */
+export interface ServiceInvoice {
+  invoice_id: string
+  kind: "service"
+  username: string
+  period_start: string
+  period_end: string
+  server_fee: number
+  maintenance_fee: number
+  amount: number
+  status: "due" | "paid" | "verified"
+  paid_at: string
+  paid_ref: string
+  verified_at: string
+  upi_uri: string
+}
+
+export interface ServiceStatement {
+  server_fee: number
+  maintenance_fee: number
+  monthly_total: number
+  /** Billing anchor — every month is billed on this day. "" = no plan. */
+  start_date: string
+  next_bill_date: string
+  total_due: number
+  total_paid: number
+  total_unverified: number
+  invoices: ServiceInvoice[]
+}
+
 export interface CommissionStatement {
   username: string
   commission_pct: number
@@ -34,6 +64,8 @@ export interface CommissionStatement {
   total_paid: number
   total_unverified: number
   invoices: CommissionInvoice[]
+  /** Monthly server + maintenance charges. */
+  service: ServiceStatement
 }
 
 export interface ClientCommission extends CommissionStatement {
@@ -56,6 +88,8 @@ export interface CommissionOverview {
   clients: (CommissionStatement & { display_name: string; account_status: string })[]
   /** Every paid / verified invoice across clients, newest first. */
   payments: (CommissionInvoice & { display_name: string })[]
+  service_totals: { total_due: number; total_paid: number; total_unverified: number }
+  service_payments: (ServiceInvoice & { display_name: string })[]
 }
 
 /** "19 Oct 2026, 3:42 pm" in the viewer's local time, or "—". */
@@ -79,3 +113,11 @@ export const STATUS_LABEL: Record<InvoiceStatus, string> = {
   paid: "🟢 Marked paid",
   verified: "✅ Verified",
 }
+
+const longDay = new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "short", year: "numeric" })
+
+/** "15 Nov 2026 – 14 Dec 2026" for a monthly period. */
+export const periodLabel = (start: string, end: string) =>
+  `${longDay.format(new Date(`${start}T00:00:00`))} – ${longDay.format(new Date(`${end}T00:00:00`))}`
+
+export const dayLabel = (d: string) => (d ? longDay.format(new Date(`${d}T00:00:00`)) : "—")

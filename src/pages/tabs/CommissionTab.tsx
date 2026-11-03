@@ -3,13 +3,16 @@ import DataTable from "../../components/DataTable"
 import UpiQr from "../../components/UpiQr"
 import { api, ApiError } from "../../lib/api"
 import {
+  dayLabel,
   paidOn,
+  periodLabel,
   rupees,
   STATUS_LABEL,
   weekLabel,
   type CommissionInvoice,
   type CommissionOverview,
   type CommissionSettings,
+  type ServiceInvoice,
 } from "../../lib/commissionTypes"
 import { usePolling } from "../../lib/usePolling"
 
@@ -34,6 +37,9 @@ export default function CommissionTab() {
   const [rate, setRate] = useState({ pct: "", from: "" })
   const [openFor, setOpenFor] = useState("")
   const [qrFor, setQrFor] = useState<CommissionInvoice | null>(null)
+  const [planFor, setPlanFor] = useState<Client | null>(null)
+  const [plan, setPlan] = useState({ server: "", maint: "", start: "" })
+  const [svcQrFor, setSvcQrFor] = useState<ServiceInvoice | null>(null)
 
   useEffect(() => {
     if (data) setForm(data.settings)
@@ -84,6 +90,36 @@ export default function CommissionTab() {
       "Failed to update.",
     )
 
+  const savePlan = async () => {
+    if (!planFor) return
+    const server = Number(plan.server || 0)
+    const maint = Number(plan.maint || 0)
+    const done = await act(
+      () =>
+        api.put(`/commission/admin/clients/${encodeURIComponent(planFor.username)}/service-plan`, {
+          server_fee: server,
+          maintenance_fee: maint,
+          start_date: plan.start,
+        }),
+      server + maint > 0
+        ? `${planFor.display_name}: monthly charges set to ${rupees(server + maint)}.`
+        : `${planFor.display_name}: monthly charges switched off.`,
+      "Failed to save the monthly plan.",
+    )
+    if (done) setPlanFor(null)
+  }
+
+  const setServiceStatus = (inv: ServiceInvoice, status: "verified" | "due") =>
+    act(
+      () =>
+        api.put(
+          `/commission/admin/clients/${encodeURIComponent(inv.username)}/service/${inv.period_start}`,
+          { status },
+        ),
+      status === "verified" ? "Marked as received." : "Reopened — it is due again.",
+      "Failed to update.",
+    )
+
   if (!data) {
     return <p className="text-sm text-slate-500">{error ?? "Loading…"}</p>
   }
@@ -100,6 +136,19 @@ export default function CommissionTab() {
         ].map(([label, value]) => (
           <div key={label} className="rounded-lg border border-slate-800 p-3">
             <div className="text-[11px] text-slate-500">{label}</div>
+            <div className="text-lg font-semibold text-slate-100">{value}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        {[
+          ["Monthly charges outstanding", rupees(data.service_totals.total_due)],
+          ["Monthly charges marked paid, not verified", rupees(data.service_totals.total_unverified)],
+          ["Monthly charges paid", rupees(data.service_totals.total_paid)],
+        ].map(([label, value]) => (
+          <div key={label} className="rounded-lg border border-slate-800 p-3">
+            <div className="text-[11px] text-slate-500">🖥️ {label}</div>
             <div className="text-lg font-semibold text-slate-100">{value}</div>
           </div>
         ))}
@@ -187,6 +236,21 @@ export default function CommissionTab() {
             },
             { key: "paid", header: "Paid", render: (r) => rupees(r.total_paid) },
             {
+              key: "svc",
+              header: "Monthly (server + maint.)",
+              render: (r) =>
+                r.service.monthly_total > 0 ? (
+                  <span>
+                    {rupees(r.service.monthly_total)} · next {dayLabel(r.service.next_bill_date)}
+                    {r.service.total_due > 0 && (
+                      <span className="text-amber-400"> · due {rupees(r.service.total_due)}</span>
+                    )}
+                  </span>
+                ) : (
+                  <span className="text-slate-500">not set</span>
+                ),
+            },
+            {
               key: "actions",
               header: "Actions",
               render: (r) => (
@@ -202,9 +266,22 @@ export default function CommissionTab() {
                   </button>
                   <button
                     className={small}
+                    onClick={() => {
+                      setPlanFor(r)
+                      setPlan({
+                        server: String(r.service.server_fee || ""),
+                        maint: String(r.service.maintenance_fee || ""),
+                        start: r.service.start_date,
+                      })
+                    }}
+                  >
+                    🖥️ Monthly plan
+                  </button>
+                  <button
+                    className={small}
                     onClick={() => setOpenFor(openFor === r.username ? "" : r.username)}
                   >
-                    🧾 Invoices ({r.invoices.length})
+                    🧾 Invoices ({r.invoices.length + r.service.invoices.length})
                   </button>
                 </div>
               ),
@@ -236,6 +313,37 @@ export default function CommissionTab() {
               render: (r) =>
                 r.status === "paid" ? (
                   <button className={small} onClick={() => setStatus(r, "verified")}>
+                    ✅ Received
+                  </button>
+                ) : (
+                  <span className="text-xs text-slate-500">verified {paidOn(r.verified_at)}</span>
+                ),
+            },
+          ]}
+        />
+      </div>
+
+      <div>
+        <h3 className="mb-2 text-sm font-semibold text-slate-200">
+          🖥️ Monthly charges payment history ({data.service_payments.length})
+        </h3>
+        <DataTable
+          rows={data.service_payments}
+          rowKey={(r) => r.invoice_id}
+          empty="No monthly payments yet."
+          columns={[
+            { key: "paid", header: "Paid on", render: (r) => paidOn(r.paid_at || r.verified_at) },
+            { key: "name", header: "Client", render: (r) => `${r.display_name} (${r.username})` },
+            { key: "period", header: "Month", render: (r) => periodLabel(r.period_start, r.period_end) },
+            { key: "amount", header: "Amount", render: (r) => rupees(r.amount) },
+            { key: "ref", header: "UPI reference", render: (r) => r.paid_ref || "—" },
+            { key: "status", header: "Status", render: (r) => STATUS_LABEL[r.status] },
+            {
+              key: "actions",
+              header: "Actions",
+              render: (r) =>
+                r.status === "paid" ? (
+                  <button className={small} onClick={() => setServiceStatus(r, "verified")}>
                     ✅ Received
                   </button>
                 ) : (
@@ -289,6 +397,124 @@ export default function CommissionTab() {
               },
             ]}
           />
+          <h3 className="mt-4 mb-2 text-sm font-semibold text-slate-200">
+            🖥️ Monthly charges — {open.display_name}
+            {open.service.start_date && ` (billed on day ${Number(open.service.start_date.slice(8))} each month)`}
+          </h3>
+          <DataTable
+            rows={open.service.invoices}
+            rowKey={(r) => r.period_start}
+            empty="No monthly bills yet."
+            columns={[
+              { key: "period", header: "Month", render: (r) => periodLabel(r.period_start, r.period_end) },
+              { key: "server", header: "Server", render: (r) => rupees(r.server_fee) },
+              { key: "maint", header: "Maintenance", render: (r) => rupees(r.maintenance_fee) },
+              { key: "amount", header: "Total", render: (r) => rupees(r.amount) },
+              { key: "status", header: "Status", render: (r) => STATUS_LABEL[r.status] },
+              { key: "paid", header: "Paid on", render: (r) => (r.paid_at ? r.paid_at.slice(0, 10) : "—") },
+              { key: "ref", header: "Reference", render: (r) => r.paid_ref || "—" },
+              {
+                key: "actions",
+                header: "Actions",
+                render: (r) => (
+                  <div className="flex gap-1">
+                    {r.status === "due" && (
+                      <button className={small} onClick={() => setSvcQrFor(r)}>
+                        QR
+                      </button>
+                    )}
+                    {(r.status === "due" || r.status === "paid") && (
+                      <button className={small} onClick={() => setServiceStatus(r, "verified")}>
+                        ✅ Received
+                      </button>
+                    )}
+                    {(r.status === "paid" || r.status === "verified") && (
+                      <button className={small} onClick={() => setServiceStatus(r, "due")}>
+                        ↩️ Reopen
+                      </button>
+                    )}
+                  </div>
+                ),
+              },
+            ]}
+          />
+        </div>
+      )}
+
+      {planFor && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-sm rounded-xl border border-slate-800 bg-slate-900 p-5">
+            <h4 className="mb-3 text-sm font-semibold text-slate-200">
+              Monthly charges for {planFor.display_name}
+            </h4>
+            <label className="mb-3 block text-xs text-slate-400">
+              Server cost per month (₹)
+              <input
+                type="number"
+                min={0}
+                step="any"
+                className={`${input} mt-1 w-full`}
+                value={plan.server}
+                onChange={(e) => setPlan({ ...plan, server: e.target.value })}
+              />
+            </label>
+            <label className="mb-3 block text-xs text-slate-400">
+              Maintenance per month (₹)
+              <input
+                type="number"
+                min={0}
+                step="any"
+                className={`${input} mt-1 w-full`}
+                value={plan.maint}
+                onChange={(e) => setPlan({ ...plan, maint: e.target.value })}
+              />
+            </label>
+            <label className="mb-1 block text-xs text-slate-400">
+              Start date (billed on this day every month)
+              <input
+                type="date"
+                className={`${input} mt-1 w-full`}
+                value={plan.start}
+                onChange={(e) => setPlan({ ...plan, start: e.target.value })}
+              />
+            </label>
+            <p className="mb-3 text-[11px] text-slate-500">
+              Total {rupees(Number(plan.server || 0) + Number(plan.maint || 0))} a month, billed in advance:
+              the first bill appears on the start date (blank = today) with a UPI QR, then again on the same
+              day every month. A fee change applies from the next bill; bills already issued keep their
+              amount. Set both to 0 to stop billing. The start date can't be moved once a monthly bill has
+              been paid.
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={savePlan}
+                className={`${btn} flex-1 bg-indigo-600 text-white hover:bg-indigo-500`}
+              >
+                Save
+              </button>
+              <button
+                onClick={() => setPlanFor(null)}
+                className={`${btn} flex-1 bg-slate-700 text-slate-100 hover:bg-slate-600`}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {svcQrFor && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-xs rounded-xl border border-slate-800 bg-slate-900 p-5 text-center">
+            <h4 className="mb-1 text-sm font-semibold text-slate-200">
+              {svcQrFor.username} · {periodLabel(svcQrFor.period_start, svcQrFor.period_end)}
+            </h4>
+            <p className="mb-3 text-lg font-semibold text-slate-100">{rupees(svcQrFor.amount)}</p>
+            <UpiQr uri={svcQrFor.upi_uri} />
+            <button onClick={() => setSvcQrFor(null)} className={`${small} mt-4`}>
+              Close
+            </button>
+          </div>
         </div>
       )}
 

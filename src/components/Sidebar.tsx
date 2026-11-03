@@ -362,6 +362,42 @@ export default function Sidebar({ status, onChanged }: Props) {
     }
   }
 
+  // Point the client broadcast at EXACTLY what this bot is running (server
+  // reads the running engine; broker, capital and risk limits are never copied).
+  const [syncBusy, setSyncBusy] = useState(false)
+  const [syncMsg, setSyncMsg] = useState<string | null>(null)
+  const [syncErr, setSyncErr] = useState<string | null>(null)
+  const syncClients = async () => {
+    const live = status?.run_config?.environment === "Live"
+    if (
+      live &&
+      !window.confirm(
+        "Your bot is LIVE. Syncing tells every connected client account to place REAL orders with these settings. Continue?",
+      )
+    )
+      return
+    setSyncBusy(true)
+    setSyncMsg(null)
+    setSyncErr(null)
+    try {
+      const r = await api.post<{ changed: boolean; restarted?: boolean }>(
+        "/fleet/broadcast/sync-admin",
+        { confirm_live: live },
+      )
+      setSyncMsg(
+        !r.changed
+          ? "Clients already run the same settings as your bot."
+          : r.restarted
+            ? "Broadcast restarted with your bot's settings — clients are in sync."
+            : "Broadcast started with your bot's settings — clients are in sync.",
+      )
+    } catch (e) {
+      setSyncErr(e instanceof ApiError ? e.message : "Could not sync clients.")
+    } finally {
+      setSyncBusy(false)
+    }
+  }
+
   const stop = async () => {
     setBusy(true)
     try {
@@ -1273,6 +1309,24 @@ export default function Sidebar({ status, onChanged }: Props) {
         >
           ⏹️ Stop Bot
         </button>
+      </div>
+
+      <div>
+        <button
+          onClick={syncClients}
+          disabled={syncBusy || !running}
+          title="Start (or restart) the client broadcast with exactly the settings your running bot uses"
+          className="w-full rounded-lg bg-sky-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-600 disabled:opacity-50"
+        >
+          📡 Sync clients to my bot
+        </button>
+        <p className="mt-1 text-[11px] text-slate-500">
+          {running
+            ? "Copies your running bot's environment, mode, strategy, instruments, RR, score, exit style, stops and square-off to the client broadcast. Broker and risk settings stay each client's own."
+            : "Start your bot first — the sync copies the settings it is running with."}
+        </p>
+        {syncMsg && <p className="mt-1 text-xs text-emerald-400">{syncMsg}</p>}
+        {syncErr && <p className="mt-1 text-xs text-red-400">{syncErr}</p>}
       </div>
 
       <div className="rounded-lg border border-slate-800 p-3">
