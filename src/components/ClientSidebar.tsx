@@ -3,7 +3,6 @@ import { api, ApiError } from "../lib/api"
 import AccountSettings from "./AccountSettings"
 import ClientBrokerConnect from "./ClientBrokerConnect"
 import ClientBrokerCredentials from "./ClientBrokerCredentials"
-import ClientPatternPanel from "./ClientPatternPanel"
 import KotakConnect from "./KotakConnect"
 import NumberInput from "./NumberInput"
 import type { BotStatus, ClientModeInfo, RiskLimits } from "../lib/types"
@@ -143,8 +142,6 @@ export default function ClientSidebar({ status, onChanged }: Props) {
           </div>
         )}
       </section>
-
-      <ClientPatternPanel />
 
       <section>
         <div className="mb-1 font-medium text-slate-300">Environment</div>
