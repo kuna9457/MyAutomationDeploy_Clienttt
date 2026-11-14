@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react"
 import DataTable from "./DataTable"
 import { api, ApiError, downloadFile } from "../lib/api"
-import type { ClientStats } from "../lib/types"
+import NumberInput from "./NumberInput"
+import type { ClientStats, RiskLimits } from "../lib/types"
 
 const ENVIRONMENTS = ["Paper", "Live"] as const
 
@@ -108,6 +109,8 @@ export default function ClientStatsPanel({
           </button>
         </div>
       </div>
+
+      <DailyLossLimit username={username} />
 
       {loading && <p className="text-sm text-slate-500">Loading…</p>}
       {error && <p className="text-sm text-red-400">{error}</p>}
@@ -217,6 +220,73 @@ export default function ClientStatsPanel({
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+/** Admin-only: this client's daily-loss kill-switch (Live). The client can't
+ *  change it — the server ignores these two fields when a client saves. */
+function DailyLossLimit({ username }: { username: string }) {
+  const [limits, setLimits] = useState<RiskLimits | null>(null)
+  const [cash, setCash] = useState(0)
+  const [pct, setPct] = useState(0)
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  const path = `/risk/admin/clients/${encodeURIComponent(username)}`
+
+  useEffect(() => {
+    setMsg(null)
+    api
+      .get<RiskLimits>(path)
+      .then((l) => {
+        setLimits(l)
+        setCash(l.max_daily_loss_cash)
+        setPct(l.max_daily_loss_pct)
+      })
+      .catch(() => setLimits(null))
+  }, [path])
+
+  const save = async () => {
+    setMsg(null)
+    try {
+      const l = await api.put<RiskLimits>(path, {
+        max_daily_loss_cash: cash,
+        max_daily_loss_pct: pct,
+      })
+      setLimits(l)
+      setMsg({ ok: true, text: "Daily loss limit saved." })
+    } catch (err) {
+      setMsg({ ok: false, text: err instanceof ApiError ? err.message : "Failed to save." })
+    }
+  }
+
+  if (!limits) return null
+  const box = "w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1 text-sm text-slate-100"
+  return (
+    <div className="mb-4 rounded-lg border border-slate-800 p-3">
+      <div className="mb-2 text-xs font-semibold text-slate-300">🛡️ Max loss per day (Live)</div>
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+        <label className="text-[11px] text-slate-400">
+          Cash (₹, 0 = off)
+          <NumberInput className={box} value={cash} min={0} step={500} onChange={setCash} ariaLabel="Max daily loss in rupees" />
+        </label>
+        <label className="text-[11px] text-slate-400">
+          % of allocated capital (0 = off)
+          <NumberInput className={box} value={pct} min={0} step={0.5} onChange={setPct} ariaLabel="Max daily loss percent" />
+        </label>
+        <div className="flex items-end">
+          <button
+            onClick={save}
+            className="w-full rounded-lg bg-indigo-600 px-3 py-1.5 text-xs text-white hover:bg-indigo-500"
+          >
+            💾 Save
+          </button>
+        </div>
+      </div>
+      <p className="mt-1 text-[11px] text-slate-500">
+        Once the day's loss reaches the tighter of the two, this client's bot opens no new trades
+        that day (open positions are still managed). Set by you; the client cannot change it.
+      </p>
+      {msg && <p className={`mt-1 text-xs ${msg.ok ? "text-emerald-400" : "text-red-400"}`}>{msg.text}</p>}
     </div>
   )
 }

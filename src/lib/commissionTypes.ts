@@ -14,6 +14,8 @@ export interface CommissionInvoice {
   paid_at: string
   paid_ref: string
   verified_at: string
+  /** When the admin last emailed the client this week's report ("" / absent = never). */
+  report_emailed_at?: string
   /** `upi://pay?...` for a due invoice, "" otherwise. */
   upi_uri: string
 }

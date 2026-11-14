@@ -109,6 +109,33 @@ export default function CommissionTab() {
     if (done) setPlanFor(null)
   }
 
+  const emailReport = (inv: CommissionInvoice) =>
+    act(
+      () =>
+        api.post(
+          `/commission/admin/clients/${encodeURIComponent(inv.username)}/invoices/${inv.week_start}/email`,
+        ),
+      `Weekly report emailed to ${inv.username}.`,
+      "Failed to send the report.",
+    )
+
+  const sendWeeklySummary = async () => {
+    setMsg(null)
+    try {
+      const res = await api.post<{ ok?: boolean; week: string; clients?: number; error?: string }>(
+        "/commission/admin/weekly-report",
+      )
+      setMsg(
+        res.ok
+          ? { kind: "ok", text: `Summary for the week of ${res.week} emailed to you (${res.clients ?? 0} clients).` }
+          : { kind: "err", text: res.error || "The summary email was not sent." },
+      )
+      refresh()
+    } catch (err) {
+      setMsg({ kind: "err", text: errText(err, "Failed to send the weekly summary.") })
+    }
+  }
+
   const setServiceStatus = (inv: ServiceInvoice, status: "verified" | "due") =>
     act(
       () =>
@@ -202,6 +229,22 @@ export default function CommissionTab() {
           Save
         </button>
       </form>
+
+      <div className="flex flex-wrap items-center gap-3 rounded-lg border border-slate-800 p-4">
+        <div className="flex-1 text-xs text-slate-400">
+          <div className="text-sm font-semibold text-slate-200">📬 Weekly summary</div>
+          Every Monday from 6:00 AM IST last week's invoices are created and a summary of every
+          client's profit and commission is emailed to you. Clients are emailed only when you press
+          📧 Email report on their invoice.
+        </div>
+        <button
+          type="button"
+          onClick={sendWeeklySummary}
+          className={`${btn} bg-slate-700 text-slate-100 hover:bg-slate-600`}
+        >
+          Send last week's summary now
+        </button>
+      </div>
 
       {msg && (
         <p className={`text-sm ${msg.kind === "ok" ? "text-emerald-400" : "text-red-400"}`}>{msg.text}</p>
@@ -382,6 +425,13 @@ export default function CommissionTab() {
                         QR
                       </button>
                     )}
+                    <button
+                      className={small}
+                      title={r.report_emailed_at ? `Last sent ${paidOn(r.report_emailed_at)}` : "Not sent yet"}
+                      onClick={() => emailReport(r)}
+                    >
+                      📧 {r.report_emailed_at ? "Resend report" : "Email report"}
+                    </button>
                     {(r.status === "due" || r.status === "paid") && (
                       <button className={small} onClick={() => setStatus(r, "verified")}>
                         ✅ Received

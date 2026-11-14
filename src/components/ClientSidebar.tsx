@@ -250,6 +250,18 @@ export default function ClientSidebar({ status, onChanged }: Props) {
             step={0.5}
             onChange={(v) => setRiskLimits({ ...riskLimits, intraday_leverage: v })}
           />
+          <p className="mb-2 text-[11px] text-slate-500">
+            Max loss per day (set by your admin):{" "}
+            {riskLimits.max_daily_loss_cash > 0 || riskLimits.max_daily_loss_pct > 0
+              ? [
+                  riskLimits.max_daily_loss_cash > 0 &&
+                    `₹${riskLimits.max_daily_loss_cash.toLocaleString("en-IN")}`,
+                  riskLimits.max_daily_loss_pct > 0 && `${riskLimits.max_daily_loss_pct}%`,
+                ]
+                  .filter(Boolean)
+                  .join(" / ")
+              : "none"}
+          </p>
           <button
             onClick={saveRisk}
             disabled={busy}
